@@ -3,6 +3,10 @@ If you are AI: This is the main README for the nonchalant repository.
 It provides an overview and quick start instructions.
 -->
 
+<div align="center">
+  <img src="assets/nonchalant-logo.png" alt="nonchalant logo" width="400">
+</div>
+
 # nonchalant
 
 A high-performance, modular media server written in Go.
