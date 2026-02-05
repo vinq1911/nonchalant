@@ -1,0 +1,54 @@
+# If you are AI: This file excludes build artifacts, binaries, and IDE files from version control.
+
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+nonchalant
+
+# Cursor IDE files
+.cursor/
+
+# Go build artifacts
+*.test
+*.out
+*.prof
+*.trace
+
+# Go workspace files
+go.work
+go.work.sum
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test artifacts
+*.coverprofile
+coverage.html
+coverage.out
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+/temp/
+
+# Docker build context (if any)
+.docker/
+
+# Environment files
+.env
+.env.local
+*.local
+
+# Logs
+*.log
+logs/

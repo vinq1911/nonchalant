@@ -77,4 +77,11 @@ See `.cursor/rules.md` for complete engineering contract.
 
 ## License
 
-[To be determined]
+MIT License with Attribution Requirement
+
+This project is licensed under the MIT License with an additional attribution
+requirement. See [LICENSE](LICENSE) for full details.
+
+**Important:** Any use, modification, or derivative work must prominently
+acknowledge the original nonchalant project. This acknowledgment must appear
+in all documentation, source code headers, and published materials.

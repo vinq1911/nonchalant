@@ -1,0 +1,7 @@
+# If you are AI: This is the example configuration file for nonchalant.
+# Copy this file and modify as needed for your deployment.
+
+server:
+  health_port: 8080  # Port for health endpoint
+  http_port: 8081    # Port for future HTTP services
+  rtmp_port: 1935    # Port for future RTMP service
