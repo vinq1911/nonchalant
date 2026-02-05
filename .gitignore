@@ -7,7 +7,7 @@ bin/
 *.dll
 *.so
 *.dylib
-nonchalant
+/nonchalant
 
 # Cursor IDE files
 .cursor/
