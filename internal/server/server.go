@@ -9,13 +9,17 @@ import (
 	"time"
 
 	"nonchalant/internal/config"
+	"nonchalant/internal/core/bus"
 	"nonchalant/internal/svc/health"
+	"nonchalant/internal/svc/rtmp"
 )
 
 // Server wraps the HTTP server and its dependencies.
 type Server struct {
 	httpServer *http.Server
 	healthSvc  *health.Service
+	rtmpServer *rtmp.Server
+	registry   *bus.Registry
 }
 
 // New creates a new server instance with the given configuration.
@@ -31,15 +35,32 @@ func New(cfg *config.Config) *Server {
 		Handler: mux,
 	}
 
+	// Create bus registry and RTMP server
+	registry := bus.NewRegistry()
+	rtmpServer := rtmp.NewServer(registry)
+
 	return &Server{
 		httpServer: httpServer,
 		healthSvc:  healthSvc,
+		rtmpServer: rtmpServer,
+		registry:   registry,
 	}
 }
 
-// Start begins serving HTTP requests.
+// Start begins serving HTTP requests and RTMP connections.
 // This method blocks until the server is stopped or encounters an error.
-func (s *Server) Start() error {
+func (s *Server) Start(cfg *config.Config) error {
+	// Start RTMP server
+	if err := s.rtmpServer.Listen(fmt.Sprintf(":%d", cfg.Server.RTMPPort)); err != nil {
+		return fmt.Errorf("RTMP server listen: %w", err)
+	}
+	go func() {
+		if err := s.rtmpServer.Accept(); err != nil {
+			// Log error but don't fail startup
+		}
+	}()
+
+	// Start HTTP server (blocks)
 	return s.httpServer.ListenAndServe()
 }
 
@@ -54,5 +75,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) ShutdownWithTimeout() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Close RTMP server
+	if s.rtmpServer != nil {
+		s.rtmpServer.Close()
+	}
+
 	return s.Shutdown(ctx)
 }

@@ -43,7 +43,7 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Start(cfg); err != nil && err != http.ErrServerClosed {
 			log.Printf("Server error: %v", err)
 			os.Exit(1)
 		}
