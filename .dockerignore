@@ -1,0 +1,14 @@
+# If you are AI: This file excludes unnecessary files from Docker builds.
+
+bin/
+*.test
+*.out
+.git/
+.cursor/
+docs/
+*.md
+!README.md
+.DS_Store
+*.swp
+*.swo
+*~
