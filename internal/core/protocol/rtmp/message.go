@@ -62,6 +62,7 @@ func CreateStreamBegin(streamID uint32) []byte {
 
 // WriteChunk writes a message as RTMP chunks.
 // Allocation: Uses pre-allocated buffers, minimal allocations.
+// NOTE: If w implements Flusher, call Flush() after writing to ensure immediate transmission.
 func WriteChunk(w io.Writer, csID uint32, msgType byte, timestamp uint32, streamID uint32, body []byte, chunkSize uint32) error {
 	bodyLen := uint32(len(body))
 	offset := uint32(0)
@@ -137,6 +138,11 @@ func WriteChunk(w io.Writer, csID uint32, msgType byte, timestamp uint32, stream
 			return err
 		}
 		offset += chunkLen
+	}
+
+	// Flush if the writer supports it (e.g., net.Conn, bufio.Writer)
+	if flusher, ok := w.(interface{ Flush() error }); ok {
+		return flusher.Flush()
 	}
 
 	return nil

@@ -104,6 +104,24 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 // objectEncoding is the object encoding from the connect command (0 for AMF0, 3 for AMF3).
 // Format: _result, transID, cmdObj, info
 func (s *ServiceSession) SendConnectResult(transID interface{}, objectEncoding float64) error {
+	// Convert transaction ID to float64 (AMF0 numbers are float64)
+	var transIDFloat float64
+	switch v := transID.(type) {
+	case float64:
+		transIDFloat = v
+	case int:
+		transIDFloat = float64(v)
+	case int64:
+		transIDFloat = float64(v)
+	default:
+		// Try to convert, default to 1 if conversion fails
+		if num, ok := transID.(float64); ok {
+			transIDFloat = num
+		} else {
+			transIDFloat = 1.0
+		}
+	}
+
 	// Create response objects with all expected fields
 	cmdObj := amf0.Object{
 		"fmsVer":       "FMS/3,0,1,123",
@@ -119,7 +137,7 @@ func (s *ServiceSession) SendConnectResult(transID interface{}, objectEncoding f
 	// Encode response (items in sequence, no array wrapper)
 	response := amf0.Array{
 		"_result",
-		transID, // Use the transaction ID from the connect command
+		transIDFloat, // Use the transaction ID from the connect command (as float64)
 		cmdObj,
 		info,
 	}
