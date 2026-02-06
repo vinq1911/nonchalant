@@ -115,7 +115,8 @@ func WriteChunk(w io.Writer, csID uint32, msgType byte, timestamp uint32, stream
 			header[4] = byte(bodyLen >> 8)
 			header[5] = byte(bodyLen)
 			header[6] = msgType
-			binary.BigEndian.PutUint32(header[7:11], streamID)
+			// Stream ID is little-endian in RTMP (per go2rtc reference)
+			binary.LittleEndian.PutUint32(header[7:11], streamID)
 			if _, err := w.Write(header); err != nil {
 				return err
 			}
