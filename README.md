@@ -13,12 +13,15 @@ A high-performance, modular media server written in Go.
 
 ## Status
 
-**Phase 1 Complete** - Bootstrap, lifecycle, and discipline
+**Phase 4 Complete** - RTMP Ingest & HTTP-FLV Output
 
 This server currently provides:
 - Clean startup and graceful shutdown
 - Health endpoint (`/healthz`)
 - YAML configuration with validation
+- **RTMP ingest** - Accept RTMP publisher connections
+- **HTTP-FLV output** - Stream live media via HTTP-FLV (`GET /{app}/{name}.flv`)
+- Core stream bus with efficient fanout
 - Integration tests
 - Documentation generation
 - Code quality enforcement
@@ -58,10 +61,30 @@ Copy `configs/nonchalant.example.yaml` and modify as needed:
 
 ```yaml
 server:
-  health_port: 8080
-  http_port: 8081
-  rtmp_port: 1935
+  health_port: 8080  # Port for health endpoint
+  http_port: 8081    # Port for HTTP-FLV output
+  rtmp_port: 1935    # Port for RTMP ingest
 ```
+
+## Usage
+
+### Publishing a Stream
+
+Publish a stream via RTMP:
+
+```bash
+ffmpeg -re -i input.mp4 -c copy -f flv rtmp://localhost:1935/live/mystream
+```
+
+### Playing a Stream
+
+Play a stream via HTTP-FLV:
+
+```bash
+ffplay http://localhost:8081/live/mystream.flv
+```
+
+Or use any FLV-compatible player with the URL: `http://localhost:8081/{app}/{name}.flv`
 
 ## Documentation
 
