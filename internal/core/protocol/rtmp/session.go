@@ -4,6 +4,7 @@
 package rtmp
 
 import (
+	"encoding/binary"
 	"io"
 	"sync"
 )
