@@ -25,7 +25,9 @@ func PerformServerHandshake(conn io.ReadWriter) error {
 	if err := binary.Read(conn, binary.BigEndian, &c0); err != nil {
 		return err
 	}
-	if c0 != RTMPVersion {
+	// NOTE: Some clients may send version 0x03 (RTMP 3.0) or other values
+	// We accept version 3 (0x03) which is the standard RTMP version
+	if c0 != RTMPVersion && c0 != 0x03 {
 		return ErrInvalidVersion
 	}
 

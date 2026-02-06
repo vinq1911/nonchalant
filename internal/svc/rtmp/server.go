@@ -51,7 +51,11 @@ func (s *Server) Accept() error {
 
 // handleConnection handles a single RTMP connection.
 func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("Error closing connection: %v", err)
+		}
+	}()
 
 	// Create service session
 	session := NewServiceSession(conn, s.registry)
@@ -59,6 +63,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Perform handshake
 	if err := session.PerformHandshake(); err != nil {
+		// Log handshake errors but don't spam logs for invalid version
+		if err.Error() == "invalid RTMP version" {
+			// This might be a browser trying to connect via HTTP, or leftover data
+			// Just close silently
+			return
+		}
 		log.Printf("Handshake failed: %v", err)
 		return
 	}
