@@ -73,7 +73,7 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 
 	s.SetApp(app)
 
-	// Send window acknowledgement size, peer bandwidth, and chunk size
+	// Send window acknowledgement size and peer bandwidth
 	// These MUST be sent AFTER connect command but BEFORE connect response
 	ackSize := createWindowAckSizeBody(5000000)
 	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeWinAckSize, 0, 0, ackSize); err != nil {
@@ -87,12 +87,8 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 		return fmt.Errorf("failed to send set peer bandwidth: %w", err)
 	}
 
-	chunkSize := rtmpprotocol.CreateSetChunkSize(4096)
-	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeSetChunkSize, 0, 0, chunkSize); err != nil {
-		log.Printf("HandleConnect: failed to send set chunk size: %v", err)
-		return fmt.Errorf("failed to send set chunk size: %w", err)
-	}
-	s.SetChunkSize(4096)
+	// NOTE: Chunk size is sent immediately after handshake (see server.go)
+	// so we don't send it again here
 
 	// Send _result response with objectEncoding
 	if err := s.SendConnectResult(command[1], objectEncoding); err != nil {
@@ -106,17 +102,14 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 // SendConnectResult sends the connect _result response.
 // transID is the transaction ID from the connect command.
 // objectEncoding is the object encoding from the connect command (0 for AMF0, 3 for AMF3).
+// Format matches go2rtc: _result, transID, {"fmsVer": "FMS/3,0,1,123"}, {"code": "NetConnection.Connect.Success"}
 func (s *ServiceSession) SendConnectResult(transID interface{}, objectEncoding float64) error {
-	// Create response object
+	// Create response objects (simplified format matching go2rtc)
 	result := amf0.Object{
-		"fmsVer":       "FMS/3,0,1,123",
-		"capabilities": float64(31),
+		"fmsVer": "FMS/3,0,1,123",
 	}
 	info := amf0.Object{
-		"level":          "status",
-		"code":           "NetConnection.Connect.Success",
-		"description":    "Connection succeeded.",
-		"objectEncoding": objectEncoding,
+		"code": "NetConnection.Connect.Success",
 	}
 
 	// Encode response

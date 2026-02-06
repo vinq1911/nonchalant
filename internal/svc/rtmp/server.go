@@ -73,6 +73,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Send Set Chunk Size immediately after handshake (before any commands)
+	// This matches go2rtc's approach
+	chunkSize := rtmpprotocol.CreateSetChunkSize(4096)
+	if err := session.WriteMessage(2, rtmpprotocol.MessageTypeSetChunkSize, 0, 0, chunkSize); err != nil {
+		log.Printf("Failed to send initial chunk size: %v", err)
+		return
+	}
+	session.SetChunkSize(4096)
+
 	// NOTE: Window ACK, peer bandwidth, and chunk size are sent AFTER connect command
 	// but BEFORE connect response (see HandleConnect)
 
