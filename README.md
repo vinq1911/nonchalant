@@ -13,7 +13,7 @@ A high-performance, modular media server written in Go.
 
 ## Status
 
-**Phase 6 Complete** - RTMP Ingest, HTTP-FLV, WebSocket-FLV & RTMP Relay
+**Phase 7 Complete** - RTMP Ingest, HTTP-FLV, WebSocket-FLV, RTMP Relay & HTTP API
 
 This server currently provides:
 - Clean startup and graceful shutdown
@@ -23,6 +23,7 @@ This server currently provides:
 - **HTTP-FLV output** - Stream live media via HTTP-FLV (`GET /{app}/{name}.flv`)
 - **WebSocket-FLV output** - Stream live media via WebSocket-FLV (`ws://host/ws/{app}/{name}`)
 - **RTMP relay** - Pull remote streams or push local streams to remote servers
+- **HTTP API** - Introspection and control endpoints (`/api/server`, `/api/streams`, `/api/relay`)
 - Core stream bus with efficient fanout
 - Integration tests
 - Documentation generation
@@ -109,6 +110,26 @@ ws.onmessage = (event) => {
 ```
 
 Or use any WebSocket-FLV compatible player with the URL: `ws://host:port/ws/{app}/{name}`
+
+### API Endpoints
+
+Query server state via HTTP API:
+
+```bash
+# Server information
+curl http://localhost:8081/api/server
+
+# Active streams
+curl http://localhost:8081/api/streams
+
+# Relay tasks
+curl http://localhost:8081/api/relay
+
+# Restart a relay task
+curl -X POST http://localhost:8081/api/relay/restart \
+  -H "Content-Type: application/json" \
+  -d '{"app":"live","name":"mystream"}'
+```
 
 ## Documentation
 

@@ -109,3 +109,62 @@ func (m *Manager) TaskCount() int {
 	defer m.mu.Unlock()
 	return len(m.tasks)
 }
+
+// GetTasks returns information about all relay tasks.
+// Used by API for introspection.
+func (m *Manager) GetTasks() []TaskInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	infos := make([]TaskInfo, 0, len(m.tasks))
+	for _, task := range m.tasks {
+		// Extract task info based on type
+		var app, name, remoteURL string
+		var running bool
+
+		switch t := task.(type) {
+		case *PullTask:
+			app = t.App()
+			name = t.Name()
+			remoteURL = t.RemoteURL()
+			running = t.IsRunning()
+		case *PushTask:
+			app = t.App()
+			name = t.Name()
+			remoteURL = t.RemoteURL()
+			running = t.IsRunning()
+		default:
+			continue
+		}
+
+		info := TaskInfo{
+			App:       app,
+			Name:      name,
+			Mode:      getTaskMode(task),
+			RemoteURL: remoteURL,
+			Running:   running,
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+// TaskInfo represents information about a relay task.
+type TaskInfo struct {
+	App       string
+	Name      string
+	Mode      string
+	RemoteURL string
+	Running   bool
+}
+
+// getTaskMode determines the mode of a task.
+func getTaskMode(task Task) string {
+	if _, ok := task.(*PullTask); ok {
+		return "pull"
+	}
+	if _, ok := task.(*PushTask); ok {
+		return "push"
+	}
+	return "unknown"
+}

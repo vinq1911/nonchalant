@@ -10,6 +10,7 @@ import (
 
 	"nonchalant/internal/config"
 	"nonchalant/internal/core/bus"
+	"nonchalant/internal/svc/api"
 	"nonchalant/internal/svc/health"
 	"nonchalant/internal/svc/httpflv"
 	"nonchalant/internal/svc/relay"
@@ -21,6 +22,7 @@ import (
 type Server struct {
 	httpServer *http.Server
 	healthSvc  *health.Service
+	apiSvc     *api.Service
 	httpflvSvc *httpflv.Service
 	wsflvSvc   *wsflv.Service
 	rtmpServer *rtmp.Server
@@ -53,6 +55,10 @@ func New(cfg *config.Config) *Server {
 	// Create relay manager
 	relayMgr := relay.NewManager(registry)
 
+	// Create API service
+	apiSvc := api.NewService(registry, relayMgr)
+	apiSvc.RegisterRoutes(mux)
+
 	// HTTP server listens on HTTP port
 	// Health endpoint is also available on this port
 	// NOTE: Health port is kept for backward compatibility but not used
@@ -64,6 +70,7 @@ func New(cfg *config.Config) *Server {
 	return &Server{
 		httpServer: httpServer,
 		healthSvc:  healthSvc,
+		apiSvc:     apiSvc,
 		httpflvSvc: httpflvSvc,
 		wsflvSvc:   wsflvSvc,
 		rtmpServer: rtmpServer,
