@@ -102,21 +102,25 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 // SendConnectResult sends the connect _result response.
 // transID is the transaction ID from the connect command.
 // objectEncoding is the object encoding from the connect command (0 for AMF0, 3 for AMF3).
-// Format matches go2rtc: _result, transID, {"fmsVer": "FMS/3,0,1,123"}, {"code": "NetConnection.Connect.Success"}
+// Format: _result, transID, cmdObj, info
 func (s *ServiceSession) SendConnectResult(transID interface{}, objectEncoding float64) error {
-	// Create response objects (simplified format matching go2rtc)
-	result := amf0.Object{
-		"fmsVer": "FMS/3,0,1,123",
+	// Create response objects with all expected fields
+	cmdObj := amf0.Object{
+		"fmsVer":       "FMS/3,0,1,123",
+		"capabilities": float64(31),
 	}
 	info := amf0.Object{
-		"code": "NetConnection.Connect.Success",
+		"level":          "status",
+		"code":           "NetConnection.Connect.Success",
+		"description":    "Connection succeeded.",
+		"objectEncoding": objectEncoding,
 	}
 
-	// Encode response
+	// Encode response (items in sequence, no array wrapper)
 	response := amf0.Array{
 		"_result",
 		transID, // Use the transaction ID from the connect command
-		result,
+		cmdObj,
 		info,
 	}
 

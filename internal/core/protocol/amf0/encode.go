@@ -112,11 +112,16 @@ func encodeArray(w io.Writer, arr Array) error {
 	return nil
 }
 
-// EncodeCommand encodes an AMF0 command (strict array) to bytes.
+// EncodeCommand encodes an AMF0 command to bytes.
+// NOTE: RTMP command bodies are AMF0 items in sequence; wrapping in StrictArray breaks ffmpeg and other clients.
+// This function writes each item sequentially without any array wrapper.
 func EncodeCommand(arr Array) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := encodeArray(&buf, arr); err != nil {
-		return nil, err
+	// Write each item sequentially (no StrictArray wrapper)
+	for _, val := range arr {
+		if err := Encode(&buf, val); err != nil {
+			return nil, err
+		}
 	}
 	return buf.Bytes(), nil
 }
