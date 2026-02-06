@@ -63,27 +63,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Send window acknowledgement size
-	ackSize := CreateWindowAckSize(2500000)
-	if err := session.WriteMessage(2, rtmpprotocol.MessageTypeWinAckSize, 0, 0, ackSize); err != nil {
-		log.Printf("Failed to send window ack size: %v", err)
-		return
-	}
-
-	// Send set peer bandwidth
-	peerBW := CreateSetPeerBandwidth(2500000, 2)
-	if err := session.WriteMessage(2, rtmpprotocol.MessageTypeSetPeerBandwidth, 0, 0, peerBW); err != nil {
-		log.Printf("Failed to send set peer bandwidth: %v", err)
-		return
-	}
-
-	// Send set chunk size
-	chunkSize := rtmpprotocol.CreateSetChunkSize(4096)
-	if err := session.WriteMessage(2, rtmpprotocol.MessageTypeSetChunkSize, 0, 0, chunkSize); err != nil {
-		log.Printf("Failed to send set chunk size: %v", err)
-		return
-	}
-	session.SetChunkSize(4096)
+	// NOTE: Window ACK, peer bandwidth, and chunk size are sent AFTER connect command
+	// but BEFORE connect response (see HandleConnect)
 
 	// Main message loop
 	for {

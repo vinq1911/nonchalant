@@ -42,8 +42,9 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 	// command[2] = command_object (object, null, or may be missing)
 
 	app := "live" // Default app name
+	objectEncoding := float64(0)
 
-	// Try to extract app from command object if present
+	// Try to extract app and objectEncoding from command object if present
 	if len(command) >= 3 && command[2] != nil {
 		var cmdObj amf0.Object
 		switch v := command[2].(type) {
@@ -63,17 +64,40 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 			if appVal, ok := cmdObj["app"].(string); ok {
 				app = appVal
 			}
+			if encVal, ok := cmdObj["objectEncoding"].(float64); ok {
+				objectEncoding = encVal
+			}
 		}
 	}
 
 	s.SetApp(app)
 
-	// Send _result response
-	return s.SendConnectResult()
+	// Send window acknowledgement size, peer bandwidth, and chunk size
+	// These MUST be sent AFTER connect command but BEFORE connect response
+	ackSize := createWindowAckSize(5000000)
+	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeWinAckSize, 0, 0, ackSize); err != nil {
+		return fmt.Errorf("failed to send window ack size: %w", err)
+	}
+
+	peerBW := createSetPeerBandwidth(5000000, 2)
+	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeSetPeerBandwidth, 0, 0, peerBW); err != nil {
+		return fmt.Errorf("failed to send set peer bandwidth: %w", err)
+	}
+
+	chunkSize := rtmpprotocol.CreateSetChunkSize(4096)
+	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeSetChunkSize, 0, 0, chunkSize); err != nil {
+		return fmt.Errorf("failed to send set chunk size: %w", err)
+	}
+	s.SetChunkSize(4096)
+
+	// Send _result response with objectEncoding
+	return s.SendConnectResult(command[1], objectEncoding)
 }
 
 // SendConnectResult sends the connect _result response.
-func (s *ServiceSession) SendConnectResult() error {
+// transID is the transaction ID from the connect command.
+// objectEncoding is the object encoding from the connect command (0 for AMF0, 3 for AMF3).
+func (s *ServiceSession) SendConnectResult(transID interface{}, objectEncoding float64) error {
 	// Create response object
 	result := amf0.Object{
 		"fmsVer":       "FMS/3,0,1,123",
@@ -83,13 +107,13 @@ func (s *ServiceSession) SendConnectResult() error {
 		"level":          "status",
 		"code":           "NetConnection.Connect.Success",
 		"description":    "Connection succeeded.",
-		"objectEncoding": float64(0),
+		"objectEncoding": objectEncoding,
 	}
 
 	// Encode response
 	response := amf0.Array{
 		"_result",
-		float64(1), // Transaction ID
+		transID, // Use the transaction ID from the connect command
 		result,
 		info,
 	}
