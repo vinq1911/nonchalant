@@ -134,18 +134,27 @@ func DecodeCommand(r io.Reader) (Array, error) {
 	arr := make(Array, 0, 4)
 
 	// Read values until we can't read more
-	// RTMP commands have at least 2 values (command name, transaction ID)
-	for {
+	// Try to read at least the command name and transaction ID
+	for i := 0; i < 10; i++ { // Limit to prevent infinite loop
 		val, err := Decode(r)
 		if err != nil {
-			// If we got at least the command name, return what we have
-			// This handles cases where command object might be missing or truncated
-			if len(arr) >= 1 {
+			// If we got at least one value, return what we have
+			// This handles cases where command might be incomplete
+			if len(arr) > 0 {
 				return arr, nil
 			}
-			// If we got nothing, return the error
-			return nil, err
+			// If we got nothing and it's not EOF, return the error
+			if err != io.EOF {
+				return nil, err
+			}
+			// EOF with no values is an error
+			if len(arr) == 0 {
+				return nil, io.ErrUnexpectedEOF
+			}
+			break
 		}
 		arr = append(arr, val)
 	}
+
+	return arr, nil
 }

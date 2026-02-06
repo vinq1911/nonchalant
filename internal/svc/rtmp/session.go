@@ -39,7 +39,7 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 	// command[0] = "connect" (string)
 	// command[1] = transaction_id (number)
 	// command[2] = command_object (object or null)
-	
+
 	// Extract app name from command object
 	var cmdObj amf0.Object
 	switch v := command[2].(type) {
