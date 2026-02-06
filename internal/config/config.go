@@ -14,7 +14,8 @@ import (
 // Config holds the complete server configuration.
 // All fields must have explicit defaults or be required.
 type Config struct {
-	Server ServerConfig `yaml:"server"`
+	Server ServerConfig  `yaml:"server"`
+	Relays []RelayConfig `yaml:"relays,omitempty"`
 }
 
 // ServerConfig defines HTTP server settings.
@@ -22,6 +23,15 @@ type ServerConfig struct {
 	HealthPort int `yaml:"health_port"` // Port for health endpoint
 	HTTPPort   int `yaml:"http_port"`   // Port for future HTTP services
 	RTMPPort   int `yaml:"rtmp_port"`   // Port for future RTMP service
+}
+
+// RelayConfig defines a relay task configuration.
+type RelayConfig struct {
+	App       string `yaml:"app"`                 // Application name
+	Name      string `yaml:"name"`                // Stream name
+	Mode      string `yaml:"mode"`                // "pull" or "push"
+	RemoteURL string `yaml:"remote_url"`          // Remote RTMP URL
+	Reconnect bool   `yaml:"reconnect,omitempty"` // Enable reconnect on failure
 }
 
 // Load reads configuration from a YAML file.

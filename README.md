@@ -13,7 +13,7 @@ A high-performance, modular media server written in Go.
 
 ## Status
 
-**Phase 5 Complete** - RTMP Ingest, HTTP-FLV & WebSocket-FLV Output
+**Phase 6 Complete** - RTMP Ingest, HTTP-FLV, WebSocket-FLV & RTMP Relay
 
 This server currently provides:
 - Clean startup and graceful shutdown
@@ -22,6 +22,7 @@ This server currently provides:
 - **RTMP ingest** - Accept RTMP publisher connections
 - **HTTP-FLV output** - Stream live media via HTTP-FLV (`GET /{app}/{name}.flv`)
 - **WebSocket-FLV output** - Stream live media via WebSocket-FLV (`ws://host/ws/{app}/{name}`)
+- **RTMP relay** - Pull remote streams or push local streams to remote servers
 - Core stream bus with efficient fanout
 - Integration tests
 - Documentation generation
@@ -63,8 +64,15 @@ Copy `configs/nonchalant.example.yaml` and modify as needed:
 ```yaml
 server:
   health_port: 8080  # Port for health endpoint
-  http_port: 8081    # Port for HTTP-FLV and WebSocket-FLV output
+  http_port: 8081    # Port for HTTP-FLV and WebSocket-FLV
   rtmp_port: 1935    # Port for RTMP ingest
+
+relays:  # Optional: RTMP relay tasks
+  - app: live
+    name: mystream
+    mode: pull  # or "push"
+    remote_url: rtmp://remote-server:1935/live/mystream
+    reconnect: true  # Optional: enable reconnect on failure
 ```
 
 ## Usage

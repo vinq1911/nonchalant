@@ -12,6 +12,7 @@ import (
 	"nonchalant/internal/core/bus"
 	"nonchalant/internal/svc/health"
 	"nonchalant/internal/svc/httpflv"
+	"nonchalant/internal/svc/relay"
 	"nonchalant/internal/svc/rtmp"
 	"nonchalant/internal/svc/wsflv"
 )
@@ -23,6 +24,7 @@ type Server struct {
 	httpflvSvc *httpflv.Service
 	wsflvSvc   *wsflv.Service
 	rtmpServer *rtmp.Server
+	relayMgr   *relay.Manager
 	registry   *bus.Registry
 }
 
@@ -48,6 +50,9 @@ func New(cfg *config.Config) *Server {
 	// Create RTMP server
 	rtmpServer := rtmp.NewServer(registry)
 
+	// Create relay manager
+	relayMgr := relay.NewManager(registry)
+
 	// HTTP server listens on HTTP port
 	// Health endpoint is also available on this port
 	// NOTE: Health port is kept for backward compatibility but not used
@@ -62,6 +67,7 @@ func New(cfg *config.Config) *Server {
 		httpflvSvc: httpflvSvc,
 		wsflvSvc:   wsflvSvc,
 		rtmpServer: rtmpServer,
+		relayMgr:   relayMgr,
 		registry:   registry,
 	}
 }
@@ -69,6 +75,11 @@ func New(cfg *config.Config) *Server {
 // Start begins serving HTTP requests and RTMP connections.
 // This method blocks until the server is stopped or encounters an error.
 func (s *Server) Start(cfg *config.Config) error {
+	// Start relay tasks
+	if err := s.relayMgr.StartTasks(cfg); err != nil {
+		return fmt.Errorf("start relay tasks: %w", err)
+	}
+
 	// Start RTMP server
 	if err := s.rtmpServer.Listen(fmt.Sprintf(":%d", cfg.Server.RTMPPort)); err != nil {
 		return fmt.Errorf("RTMP server listen: %w", err)
@@ -94,6 +105,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) ShutdownWithTimeout() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Stop relay manager
+	if s.relayMgr != nil {
+		s.relayMgr.Stop()
+	}
 
 	// Close RTMP server
 	if s.rtmpServer != nil {
