@@ -80,6 +80,7 @@ fmt:
 	go fmt ./...
 
 # Test targets
+# NOTE: Exclude scripts/ directory as it contains multiple main functions
 test:
 	go test ./cmd/... ./internal/...
 
@@ -90,7 +91,7 @@ test-race:
 	go test -race ./cmd/... ./internal/...
 
 bench:
-	go test -bench=. -benchmem ./...
+	go test -bench=. -benchmem ./cmd/... ./internal/...
 
 # Integration tests
 itest: build
