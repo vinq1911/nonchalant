@@ -13,6 +13,7 @@ import (
 	"nonchalant/internal/svc/health"
 	"nonchalant/internal/svc/httpflv"
 	"nonchalant/internal/svc/rtmp"
+	"nonchalant/internal/svc/wsflv"
 )
 
 // Server wraps the HTTP server and its dependencies.
@@ -20,6 +21,7 @@ type Server struct {
 	httpServer *http.Server
 	healthSvc  *health.Service
 	httpflvSvc *httpflv.Service
+	wsflvSvc   *wsflv.Service
 	rtmpServer *rtmp.Server
 	registry   *bus.Registry
 }
@@ -39,6 +41,10 @@ func New(cfg *config.Config) *Server {
 	httpflvSvc := httpflv.NewService(registry)
 	httpflvSvc.RegisterRoutes(mux)
 
+	// Create WebSocket-FLV service
+	wsflvSvc := wsflv.NewService(registry)
+	wsflvSvc.RegisterRoutes(mux)
+
 	// Create RTMP server
 	rtmpServer := rtmp.NewServer(registry)
 
@@ -54,6 +60,7 @@ func New(cfg *config.Config) *Server {
 		httpServer: httpServer,
 		healthSvc:  healthSvc,
 		httpflvSvc: httpflvSvc,
+		wsflvSvc:   wsflvSvc,
 		rtmpServer: rtmpServer,
 		registry:   registry,
 	}

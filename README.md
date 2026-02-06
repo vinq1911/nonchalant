@@ -13,7 +13,7 @@ A high-performance, modular media server written in Go.
 
 ## Status
 
-**Phase 4 Complete** - RTMP Ingest & HTTP-FLV Output
+**Phase 5 Complete** - RTMP Ingest, HTTP-FLV & WebSocket-FLV Output
 
 This server currently provides:
 - Clean startup and graceful shutdown
@@ -21,6 +21,7 @@ This server currently provides:
 - YAML configuration with validation
 - **RTMP ingest** - Accept RTMP publisher connections
 - **HTTP-FLV output** - Stream live media via HTTP-FLV (`GET /{app}/{name}.flv`)
+- **WebSocket-FLV output** - Stream live media via WebSocket-FLV (`ws://host/ws/{app}/{name}`)
 - Core stream bus with efficient fanout
 - Integration tests
 - Documentation generation
@@ -62,7 +63,7 @@ Copy `configs/nonchalant.example.yaml` and modify as needed:
 ```yaml
 server:
   health_port: 8080  # Port for health endpoint
-  http_port: 8081    # Port for HTTP-FLV output
+  http_port: 8081    # Port for HTTP-FLV and WebSocket-FLV output
   rtmp_port: 1935    # Port for RTMP ingest
 ```
 
@@ -85,6 +86,21 @@ ffplay http://localhost:8081/live/mystream.flv
 ```
 
 Or use any FLV-compatible player with the URL: `http://localhost:8081/{app}/{name}.flv`
+
+Play a stream via WebSocket-FLV (browser-compatible):
+
+```javascript
+const ws = new WebSocket('ws://localhost:8081/ws/live/mystream');
+ws.binaryType = 'arraybuffer';
+ws.onmessage = (event) => {
+  // First message contains FLV header
+  // Subsequent messages contain FLV tags
+  const flvData = new Uint8Array(event.data);
+  // Process FLV data with your player
+};
+```
+
+Or use any WebSocket-FLV compatible player with the URL: `ws://host:port/ws/{app}/{name}`
 
 ## Documentation
 
