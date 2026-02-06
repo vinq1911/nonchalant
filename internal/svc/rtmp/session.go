@@ -30,15 +30,19 @@ func NewServiceSession(conn io.ReadWriter, registry *bus.Registry) *ServiceSessi
 }
 
 // HandleConnect handles the connect command.
+// Format: ["connect", transaction_id, command_object, ...]
 func (s *ServiceSession) HandleConnect(command amf0.Array) error {
-	if len(command) < 2 {
-		return fmt.Errorf("invalid connect command")
+	if len(command) < 3 {
+		return fmt.Errorf("invalid connect command: need at least 3 elements")
 	}
 
+	// command[0] = "connect" (string)
+	// command[1] = transaction_id (number)
+	// command[2] = command_object (object or null)
+	
 	// Extract app name from command object
-	// Command object can be Object or ECMAArray (both are treated as Object)
 	var cmdObj amf0.Object
-	switch v := command[1].(type) {
+	switch v := command[2].(type) {
 	case amf0.Object:
 		cmdObj = v
 	case map[string]interface{}:
@@ -47,6 +51,9 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 		for k, val := range v {
 			cmdObj[k] = val
 		}
+	case nil:
+		// Command object can be null, try to get app from elsewhere or use default
+		return fmt.Errorf("connect command object is null")
 	default:
 		return fmt.Errorf("invalid connect command object type: %T", v)
 	}
