@@ -31,36 +31,40 @@ func NewServiceSession(conn io.ReadWriter, registry *bus.Registry) *ServiceSessi
 
 // HandleConnect handles the connect command.
 // Format: ["connect", transaction_id, command_object, ...]
+// NOTE: Some clients may send command_object as a separate element or it may be missing
 func (s *ServiceSession) HandleConnect(command amf0.Array) error {
-	if len(command) < 3 {
-		return fmt.Errorf("invalid connect command: need at least 3 elements")
+	if len(command) < 2 {
+		return fmt.Errorf("invalid connect command: need at least 2 elements")
 	}
 
 	// command[0] = "connect" (string)
 	// command[1] = transaction_id (number)
-	// command[2] = command_object (object or null)
+	// command[2] = command_object (object, null, or may be missing)
 
-	// Extract app name from command object
-	var cmdObj amf0.Object
-	switch v := command[2].(type) {
-	case amf0.Object:
-		cmdObj = v
-	case map[string]interface{}:
-		// Convert to Object type
-		cmdObj = make(amf0.Object)
-		for k, val := range v {
-			cmdObj[k] = val
+	app := "live" // Default app name
+
+	// Try to extract app from command object if present
+	if len(command) >= 3 && command[2] != nil {
+		var cmdObj amf0.Object
+		switch v := command[2].(type) {
+		case amf0.Object:
+			cmdObj = v
+		case map[string]interface{}:
+			// Convert to Object type
+			cmdObj = make(amf0.Object)
+			for k, val := range v {
+				cmdObj[k] = val
+			}
+		default:
+			// Not an object, use default app
+			log.Printf("Connect command object is not an object (type: %T), using default app", v)
 		}
-	case nil:
-		// Command object can be null, try to get app from elsewhere or use default
-		return fmt.Errorf("connect command object is null")
-	default:
-		return fmt.Errorf("invalid connect command object type: %T", v)
-	}
 
-	app, ok := cmdObj["app"].(string)
-	if !ok {
-		return fmt.Errorf("app not found in connect command")
+		if cmdObj != nil {
+			if appVal, ok := cmdObj["app"].(string); ok {
+				app = appVal
+			}
+		}
 	}
 
 	s.SetApp(app)

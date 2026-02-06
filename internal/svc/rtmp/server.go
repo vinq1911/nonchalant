@@ -101,6 +101,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Debug: log message type
+		log.Printf("Received message: type=%d (csID=%d, len=%d)", msgType, csID, len(body))
+
 		// Handle message based on type
 		switch msgType {
 		case rtmpprotocol.MessageTypeSetChunkSize:
@@ -128,9 +131,22 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 // handleCommand handles AMF0 command messages.
 func (s *Server) handleCommand(session *ServiceSession, body []byte) error {
-	// Decode command
+	// Decode command (only command name and transaction ID, skips rest)
 	command, err := amf0.DecodeCommand(bytes.NewReader(body))
 	if err != nil {
+		// Log diagnostic info before returning error
+		hexDump := ""
+		if len(body) > 0 {
+			hexDump = fmt.Sprintf(" (first byte: 0x%02x", body[0])
+			if len(body) > 1 {
+				hexDump += fmt.Sprintf(", second: 0x%02x", body[1])
+			}
+			if len(body) > 15 {
+				hexDump += fmt.Sprintf(", bytes 0-15: %x", body[:16])
+			}
+			hexDump += ")"
+		}
+		log.Printf("Failed to decode command: %v (body length: %d)%s", err, len(body), hexDump)
 		return err
 	}
 

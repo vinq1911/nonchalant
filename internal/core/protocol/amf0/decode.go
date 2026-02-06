@@ -127,33 +127,136 @@ func decodeECMAArray(r io.Reader) (Object, error) {
 	return decodeObject(r)
 }
 
+// SkipAny skips over any AMF0 value without decoding it.
+// This allows us to skip complex types we don't need to parse.
+func SkipAny(r io.Reader) error {
+	var typeMarker byte
+	if err := binary.Read(r, binary.BigEndian, &typeMarker); err != nil {
+		return err
+	}
+
+	switch typeMarker {
+	case TypeNumber:
+		// Skip 8 bytes (double)
+		var buf [8]byte
+		_, err := io.ReadFull(r, buf[:])
+		return err
+	case TypeBoolean:
+		// Skip 1 byte
+		var b byte
+		return binary.Read(r, binary.BigEndian, &b)
+	case TypeString:
+		// Read length, then skip that many bytes
+		var length uint16
+		if err := binary.Read(r, binary.BigEndian, &length); err != nil {
+			return err
+		}
+		if length > 0 {
+			buf := make([]byte, length)
+			_, err := io.ReadFull(r, buf)
+			return err
+		}
+		return nil
+	case TypeObject:
+		// Skip object key-value pairs until object end marker
+		for {
+			var keyLen uint16
+			if err := binary.Read(r, binary.BigEndian, &keyLen); err != nil {
+				return err
+			}
+			if keyLen == 0 {
+				// Object end marker
+				var endMarker byte
+				return binary.Read(r, binary.BigEndian, &endMarker)
+			}
+			// Skip key
+			keyBuf := make([]byte, keyLen)
+			if _, err := io.ReadFull(r, keyBuf); err != nil {
+				return err
+			}
+			// Skip value (recursive)
+			if err := SkipAny(r); err != nil {
+				return err
+			}
+		}
+	case TypeECMAArray:
+		// Skip count (4 bytes), then skip as object
+		var count uint32
+		if err := binary.Read(r, binary.BigEndian, &count); err != nil {
+			return err
+		}
+		// ECMA arrays are structured like objects
+		return SkipAny(r) // Will skip as object
+	case TypeStrictArray:
+		// Read count, then skip each element
+		var count uint32
+		if err := binary.Read(r, binary.BigEndian, &count); err != nil {
+			return err
+		}
+		for i := uint32(0); i < count; i++ {
+			if err := SkipAny(r); err != nil {
+				return err
+			}
+		}
+		return nil
+	case TypeNull, TypeUndefined:
+		// No data to skip
+		return nil
+	case TypeLongString:
+		// Read length (4 bytes), then skip that many bytes
+		var length uint32
+		if err := binary.Read(r, binary.BigEndian, &length); err != nil {
+			return err
+		}
+		if length > 0 {
+			buf := make([]byte, length)
+			_, err := io.ReadFull(r, buf)
+			return err
+		}
+		return nil
+	case 0x11: // AVMPlus object marker (AMF3 switch)
+		// Skip AMF3 data (for now, just skip the marker)
+		// NOTE: Full AMF3 support would require decoding, but we can skip it
+		return nil
+	default:
+		return ErrUnexpectedType
+	}
+}
+
 // DecodeCommand decodes an AMF0 command message.
-// RTMP commands are a sequence of AMF0 values (not a strict array).
+// RTMP commands are a sequence of AMF0 values.
 // Format: command_name (string), transaction_id (number), command_object (object/null), ...args
+// We decode the first two values (name, transaction ID) and skip the rest.
 func DecodeCommand(r io.Reader) (Array, error) {
 	arr := make(Array, 0, 4)
 
-	// Read values until we can't read more
-	// Try to read at least the command name and transaction ID
-	for i := 0; i < 10; i++ { // Limit to prevent infinite loop
-		val, err := Decode(r)
+	// Read command name (required)
+	cmdName, err := Decode(r)
+	if err != nil {
+		return nil, err
+	}
+	arr = append(arr, cmdName)
+
+	// Read transaction ID (required)
+	transID, err := Decode(r)
+	if err != nil {
+		// If we got command name, return what we have
+		return arr, nil
+	}
+	arr = append(arr, transID)
+
+	// Skip remaining arguments (command object, etc.)
+	// We don't need to parse them for basic functionality
+	for {
+		err := SkipAny(r)
 		if err != nil {
-			// If we got at least one value, return what we have
-			// This handles cases where command might be incomplete
-			if len(arr) > 0 {
-				return arr, nil
+			if err == io.EOF {
+				break
 			}
-			// If we got nothing and it's not EOF, return the error
-			if err != io.EOF {
-				return nil, err
-			}
-			// EOF with no values is an error
-			if len(arr) == 0 {
-				return nil, io.ErrUnexpectedEOF
-			}
+			// If we got command name and transaction ID, that's enough
+			// Ignore errors when skipping remaining args
 			break
 		}
-		arr = append(arr, val)
 	}
 
 	return arr, nil
