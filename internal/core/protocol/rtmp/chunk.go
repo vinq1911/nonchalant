@@ -24,6 +24,7 @@ type ChunkStream struct {
 	timestamp         uint32
 	timestampDelta    uint32
 	extendedTimestamp uint32
+	streamID          uint32 // Stream ID from message header (format 0 only)
 	buffer            []byte
 	bytesRead         uint32
 	chunkSize         uint32
@@ -164,7 +165,8 @@ func (p *ChunkParser) readMessageHeader(r io.Reader, cs *ChunkStream, fmt byte) 
 		}
 		cs.messageLength = uint32(header[0])<<16 | uint32(header[1])<<8 | uint32(header[2])
 		cs.messageType = header[3]
-		// Stream ID is in header[4:8], but we don't use it for now
+		// Stream ID is in header[4:8] (little-endian)
+		cs.streamID = binary.LittleEndian.Uint32(header[4:8])
 		cs.bytesRead = 0
 		cs.buffer = cs.buffer[:0]
 
@@ -231,13 +233,14 @@ func (p *ChunkParser) readMessageHeader(r io.Reader, cs *ChunkStream, fmt byte) 
 
 // GetCompleteMessage returns the complete message if reassembly is complete.
 // Returns nil if message is not yet complete.
-func (p *ChunkParser) GetCompleteMessage(csID uint32) ([]byte, byte, uint32, bool) {
+// Returns: body, messageType, timestamp, streamID, complete
+func (p *ChunkParser) GetCompleteMessage(csID uint32) ([]byte, byte, uint32, uint32, bool) {
 	p.mu.RLock()
 	cs, exists := p.chunkStreams[csID]
 	p.mu.RUnlock()
 
 	if !exists || cs.bytesRead < cs.messageLength {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 
 	// Message is complete
@@ -245,10 +248,11 @@ func (p *ChunkParser) GetCompleteMessage(csID uint32) ([]byte, byte, uint32, boo
 	copy(msg, cs.buffer)
 	msgType := cs.messageType
 	timestamp := cs.timestamp
+	streamID := cs.streamID
 
 	// Reset for next message
 	cs.buffer = cs.buffer[:0]
 	cs.bytesRead = 0
 
-	return msg, msgType, timestamp, true
+	return msg, msgType, timestamp, streamID, true
 }

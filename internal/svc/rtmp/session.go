@@ -77,22 +77,30 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 	// These MUST be sent AFTER connect command but BEFORE connect response
 	ackSize := createWindowAckSizeBody(5000000)
 	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeWinAckSize, 0, 0, ackSize); err != nil {
+		log.Printf("HandleConnect: failed to send window ack size: %v", err)
 		return fmt.Errorf("failed to send window ack size: %w", err)
 	}
 
 	peerBW := createSetPeerBandwidthBody(5000000, 2)
 	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeSetPeerBandwidth, 0, 0, peerBW); err != nil {
+		log.Printf("HandleConnect: failed to send set peer bandwidth: %v", err)
 		return fmt.Errorf("failed to send set peer bandwidth: %w", err)
 	}
 
 	chunkSize := rtmpprotocol.CreateSetChunkSize(4096)
 	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeSetChunkSize, 0, 0, chunkSize); err != nil {
+		log.Printf("HandleConnect: failed to send set chunk size: %v", err)
 		return fmt.Errorf("failed to send set chunk size: %w", err)
 	}
 	s.SetChunkSize(4096)
 
 	// Send _result response with objectEncoding
-	return s.SendConnectResult(command[1], objectEncoding)
+	if err := s.SendConnectResult(command[1], objectEncoding); err != nil {
+		log.Printf("HandleConnect: failed to send connect result: %v", err)
+		return err
+	}
+	log.Printf("HandleConnect: successfully sent connect response for app=%s", app)
+	return nil
 }
 
 // SendConnectResult sends the connect _result response.
@@ -149,7 +157,8 @@ func (s *ServiceSession) HandleCreateStream(command amf0.Array) error {
 }
 
 // HandlePublish handles the publish command.
-func (s *ServiceSession) HandlePublish(command amf0.Array) error {
+// streamID is the stream ID from the message header where the publish command was received.
+func (s *ServiceSession) HandlePublish(command amf0.Array, streamID uint32) error {
 	if len(command) < 3 {
 		return fmt.Errorf("invalid publish command")
 	}
@@ -184,12 +193,13 @@ func (s *ServiceSession) HandlePublish(command amf0.Array) error {
 	s.SetStreamName(streamName)
 	s.SetState(rtmpprotocol.StatePublishing)
 
-	// Send onStatus response
-	return s.SendPublishStatus("status", "NetStream.Publish.Start", "Start publishing")
+	// Send onStatus response on the same stream ID as the publish command
+	return s.SendPublishStatus("status", "NetStream.Publish.Start", "Start publishing", streamID)
 }
 
 // SendPublishStatus sends an onStatus message.
-func (s *ServiceSession) SendPublishStatus(level, code, description string) error {
+// streamID is the stream ID from the publish command message header.
+func (s *ServiceSession) SendPublishStatus(level, code, description string, streamID uint32) error {
 	status := amf0.Object{
 		"level":       level,
 		"code":        code,
@@ -208,7 +218,7 @@ func (s *ServiceSession) SendPublishStatus(level, code, description string) erro
 		return err
 	}
 
-	streamID := s.nextStreamID - 1
+	// Send on status message on the same stream ID as the publish command
 	return s.WriteMessage(5, rtmpprotocol.MessageTypeCommandAMF0, 0, streamID, body)
 }
 

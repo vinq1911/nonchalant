@@ -88,7 +88,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		// Get complete message if available
-		body, msgType, timestamp, complete := session.GetCompleteMessage(csID)
+		body, msgType, timestamp, streamID, complete := session.GetCompleteMessage(csID)
 		if !complete {
 			continue
 		}
@@ -110,7 +110,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			// Most don't require a response, just continue
 
 		case rtmpprotocol.MessageTypeCommandAMF0:
-			if err := s.handleCommand(session, body); err != nil {
+			if err := s.handleCommand(session, body, streamID); err != nil {
 				log.Printf("Command handling error: %v", err)
 				return
 			}
@@ -125,15 +125,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 }
 
 // handleCommand handles AMF0 command messages.
-func (s *Server) handleCommand(session *ServiceSession, body []byte) error {
-	// Log first bytes for debugging
-	if len(body) > 0 {
-		log.Printf("Decoding command: first byte=0x%02x, body length=%d", body[0], len(body))
-		if len(body) > 16 {
-			log.Printf("  First 16 bytes: %x", body[:16])
-		}
-	}
-
+// streamID is the stream ID from the message header (used for publish/play commands).
+func (s *Server) handleCommand(session *ServiceSession, body []byte, streamID uint32) error {
 	// Decode command (only command name and transaction ID, skips rest)
 	command, err := amf0.DecodeCommand(bytes.NewReader(body))
 	if err != nil {
@@ -153,33 +146,42 @@ func (s *Server) handleCommand(session *ServiceSession, body []byte) error {
 		return err
 	}
 
-	log.Printf("Decoded command array: length=%d", len(command))
 	if len(command) == 0 {
-		log.Printf("Empty command array")
 		return nil
 	}
 
-	log.Printf("Command[0] type: %T, value: %v", command[0], command[0])
 	cmdName, ok := command[0].(string)
 	if !ok {
-		log.Printf("Command name is not string, got %T", command[0])
 		return nil
 	}
-	log.Printf("Command: %s", cmdName)
 
 	switch cmdName {
 	case "connect":
-		return session.HandleConnect(command)
+		if err := session.HandleConnect(command); err != nil {
+			return err
+		}
+		log.Printf("Command handled: connect")
+		return nil
 	case "createStream":
-		return session.HandleCreateStream(command)
+		if err := session.HandleCreateStream(command); err != nil {
+			return err
+		}
+		log.Printf("Command handled: createStream")
+		return nil
 	case "publish":
-		return session.HandlePublish(command)
+		if err := session.HandlePublish(command, streamID); err != nil {
+			return err
+		}
+		log.Printf("Command handled: publish (streamID=%d)", streamID)
+		return nil
 	case "deleteStream", "closeStream":
 		// Handle unpublish
+		log.Printf("Command handled: %s (unpublish)", cmdName)
 		session.Close()
 		return nil
 	default:
 		// NOTE: Unknown commands are ignored
+		log.Printf("Command ignored: %s", cmdName)
 		return nil
 	}
 }

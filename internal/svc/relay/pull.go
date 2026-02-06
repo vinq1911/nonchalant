@@ -121,7 +121,7 @@ func (t *PullTask) Start(ctx context.Context) error {
 					return
 				}
 				// Process message (simplified - would need full command handling)
-				_, _, _, _ = session.GetCompleteMessage(csID)
+				_, _, _, _, _ = session.GetCompleteMessage(csID)
 			}
 		}()
 

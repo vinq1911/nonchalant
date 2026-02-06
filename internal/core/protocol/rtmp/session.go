@@ -61,7 +61,8 @@ func (s *Session) ReadChunk() (uint32, error) {
 }
 
 // GetCompleteMessage gets a complete message if available.
-func (s *Session) GetCompleteMessage(csID uint32) ([]byte, byte, uint32, bool) {
+// Returns: body, messageType, timestamp, streamID, complete
+func (s *Session) GetCompleteMessage(csID uint32) ([]byte, byte, uint32, uint32, bool) {
 	return s.parser.GetCompleteMessage(csID)
 }
 
