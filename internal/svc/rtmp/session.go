@@ -241,3 +241,18 @@ func (s *ServiceSession) Close() {
 	}
 	s.Session.Close()
 }
+
+// createWindowAckSizeBody creates a window acknowledgement size message body.
+func createWindowAckSizeBody(size uint32) []byte {
+	body := make([]byte, 4)
+	binary.BigEndian.PutUint32(body, size)
+	return body
+}
+
+// createSetPeerBandwidthBody creates a set peer bandwidth message body.
+func createSetPeerBandwidthBody(size uint32, limitType byte) []byte {
+	body := make([]byte, 5)
+	binary.BigEndian.PutUint32(body[0:4], size)
+	body[4] = limitType
+	return body
+}
