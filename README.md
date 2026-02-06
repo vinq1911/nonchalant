@@ -143,6 +143,7 @@ curl -X POST http://localhost:8081/api/relay/restart \
 
 - [Architecture](docs/ARCHITECTURE.md) - System design and structure
 - [Configuration](docs/CONFIG.md) - Configuration schema
+- [Usage Guide](docs/USAGE.md) - Step-by-step feature usage
 - [Testing](docs/TESTING.md) - How to run tests
 
 ## Development

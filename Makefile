@@ -1,6 +1,6 @@
 # If you are AI: This Makefile provides all build, test, and deployment targets for nonchalant.
 
-.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check
+.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video
 
 # Configuration variables
 CONFIG ?= configs/nonchalant.example.yaml
@@ -35,6 +35,13 @@ help:
 	@echo "  check-lines        - Check file line limits"
 	@echo "  check-comments     - Check file headers and function comments"
 	@echo "  check              - Run all checks"
+	@echo "  test-video         - Test with video file (publish, play, verify)"
+	@echo "  test-workflow      - Test complete workflow"
+	@echo "  test-rtmp-ingest   - Test RTMP publishing"
+	@echo "  test-httpflv       - Test HTTP-FLV playback"
+	@echo "  test-wsflv         - Test WebSocket-FLV connection"
+	@echo "  test-api           - Test all API endpoints"
+	@echo "  test-features      - Run all feature tests (requires server)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  CONFIG=$(CONFIG)"
@@ -122,3 +129,107 @@ check-comments:
 # Aggregate check target
 check: fmt check-lines check-comments docs-check test
 	@echo "All checks passed"
+
+# Feature testing targets
+# These targets test individual features using the test video
+
+# Test RTMP ingest (publish test video)
+test-rtmp-ingest: build
+	@echo "Testing RTMP ingest..."
+	@echo "Publishing test video to rtmp://localhost:1935/live/teststream"
+	@timeout 10 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/teststream 2>&1 | head -20 || true
+	@echo "RTMP ingest test complete"
+
+# Test HTTP-FLV output (requires server running)
+test-httpflv: build
+	@echo "Testing HTTP-FLV output..."
+	@echo "Fetching stream via HTTP-FLV..."
+	@timeout 5 curl -s http://localhost:8081/live/teststream.flv | wc -c || echo "Stream not available"
+	@echo "HTTP-FLV test complete"
+
+# Test WebSocket-FLV output (requires server running)
+test-wsflv: build
+	@echo "Testing WebSocket-FLV output..."
+	@echo "Connecting to WebSocket endpoint..."
+	@timeout 3 curl -s --include \
+		--no-buffer \
+		--header "Connection: Upgrade" \
+		--header "Upgrade: websocket" \
+		--header "Sec-WebSocket-Key: test" \
+		--header "Sec-WebSocket-Version: 13" \
+		http://localhost:8081/ws/live/teststream 2>&1 | head -5 || echo "WebSocket test requires proper client"
+	@echo "WebSocket-FLV test complete"
+
+# Test API endpoints
+test-api: build
+	@echo "Testing HTTP API..."
+	@echo "GET /api/server:"
+	@curl -s http://localhost:8081/api/server | python3 -m json.tool || echo "API not available"
+	@echo ""
+	@echo "GET /api/streams:"
+	@curl -s http://localhost:8081/api/streams | python3 -m json.tool || echo "API not available"
+	@echo ""
+	@echo "GET /api/relay:"
+	@curl -s http://localhost:8081/api/relay | python3 -m json.tool || echo "API not available"
+	@echo "API test complete"
+
+# Test complete workflow (publish, play, verify)
+test-workflow: build
+	@echo "Testing complete workflow..."
+	@echo "1. Starting server in background..."
+	@./bin/nonchalant --config configs/nonchalant.example.yaml &
+	@SERVER_PID=$$!; \
+	sleep 2; \
+	echo "2. Publishing test video..."; \
+	timeout 5 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/workflowtest 2>&1 > /dev/null & \
+	PUBLISH_PID=$$!; \
+	sleep 2; \
+	echo "3. Checking API for stream..."; \
+	curl -s http://localhost:8081/api/streams | python3 -m json.tool || true; \
+	echo "4. Fetching stream via HTTP-FLV..."; \
+	timeout 3 curl -s http://localhost:8081/live/workflowtest.flv | wc -c || true; \
+	echo "5. Cleaning up..."; \
+	kill $$PUBLISH_PID 2>/dev/null || true; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	wait $$SERVER_PID 2>/dev/null || true; \
+	echo "Workflow test complete"
+
+# Test all features (requires server running)
+test-features: test-api test-httpflv test-wsflv
+	@echo "All feature tests complete"
+
+# Test with test video (full integration test)
+test-video: build
+	@echo "Testing with video file: assets/nonchalant-test.mp4"
+	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
+		echo "Error: assets/nonchalant-test.mp4 not found"; \
+		echo "Please add a test video file to assets/"; \
+		exit 1; \
+	fi
+	@echo "Starting server..."
+	@./bin/nonchalant --config configs/nonchalant.example.yaml &
+	@SERVER_PID=$$!; \
+	trap "kill $$SERVER_PID 2>/dev/null || true" EXIT; \
+	sleep 2; \
+	echo "Publishing test video..."; \
+	timeout 10 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/videotest 2>&1 > /dev/null & \
+	PUBLISH_PID=$$!; \
+	sleep 3; \
+	echo "Verifying stream via API..."; \
+	curl -s http://localhost:8081/api/streams | python3 -m json.tool || true; \
+	echo "Fetching stream via HTTP-FLV..."; \
+	BYTES=$$(timeout 5 curl -s http://localhost:8081/live/videotest.flv | wc -c); \
+	if [ $$BYTES -gt 0 ]; then \
+		echo "✓ HTTP-FLV test passed (received $$BYTES bytes)"; \
+	else \
+		echo "✗ HTTP-FLV test failed (no data received)"; \
+	fi; \
+	kill $$PUBLISH_PID 2>/dev/null || true; \
+	sleep 1; \
+	echo "Test complete"
