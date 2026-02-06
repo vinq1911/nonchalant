@@ -93,7 +93,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		// NOTE: Debug logging removed for production
+		// Debug: log all message types to trace protocol flow
+		if msgType == rtmpprotocol.MessageTypeCommandAMF0 || msgType == rtmpprotocol.MessageTypeAudio || msgType == rtmpprotocol.MessageTypeVideo {
+			log.Printf("Received message: type=%d (csID=%d, streamID=%d, len=%d)", msgType, csID, streamID, len(body))
+		}
 
 		// Handle message based on type
 		switch msgType {
