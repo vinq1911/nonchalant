@@ -57,7 +57,6 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 			}
 		default:
 			// Not an object, use default app
-			log.Printf("Connect command object is not an object (type: %T), using default app", v)
 		}
 
 		if cmdObj != nil {

@@ -102,8 +102,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		// Debug: log message type
-		log.Printf("Received message: type=%d (csID=%d, len=%d)", msgType, csID, len(body))
+		// NOTE: Debug logging removed for production
 
 		// Handle message based on type
 		switch msgType {
@@ -114,6 +113,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 				continue
 			}
 			session.SetChunkSize(size)
+
+		case rtmpprotocol.MessageTypeUserCtrl:
+			// Handle user control messages (ping, stream begin, etc.)
+			// Most don't require a response, just continue
 
 		case rtmpprotocol.MessageTypeCommandAMF0:
 			if err := s.handleCommand(session, body); err != nil {
@@ -132,6 +135,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 // handleCommand handles AMF0 command messages.
 func (s *Server) handleCommand(session *ServiceSession, body []byte) error {
+	// Log first bytes for debugging
+	if len(body) > 0 {
+		log.Printf("Decoding command: first byte=0x%02x, body length=%d", body[0], len(body))
+		if len(body) > 16 {
+			log.Printf("  First 16 bytes: %x", body[:16])
+		}
+	}
+
 	// Decode command (only command name and transaction ID, skips rest)
 	command, err := amf0.DecodeCommand(bytes.NewReader(body))
 	if err != nil {
@@ -151,14 +162,19 @@ func (s *Server) handleCommand(session *ServiceSession, body []byte) error {
 		return err
 	}
 
+	log.Printf("Decoded command array: length=%d", len(command))
 	if len(command) == 0 {
+		log.Printf("Empty command array")
 		return nil
 	}
 
+	log.Printf("Command[0] type: %T, value: %v", command[0], command[0])
 	cmdName, ok := command[0].(string)
 	if !ok {
+		log.Printf("Command name is not string, got %T", command[0])
 		return nil
 	}
+	log.Printf("Command: %s", cmdName)
 
 	switch cmdName {
 	case "connect":
