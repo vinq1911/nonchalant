@@ -33,8 +33,8 @@ func TestServerStartupAndShutdown(t *testing.T) {
 	// Create a temporary config file
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	configContent := `server:
-  health_port: ` + fmt.Sprintf("%d", port) + `
-  http_port: 8081
+  health_port: 8080
+  http_port: ` + fmt.Sprintf("%d", port) + `
   rtmp_port: 1935
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {

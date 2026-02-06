@@ -11,6 +11,7 @@ import (
 	"nonchalant/internal/config"
 	"nonchalant/internal/core/bus"
 	"nonchalant/internal/svc/health"
+	"nonchalant/internal/svc/httpflv"
 	"nonchalant/internal/svc/rtmp"
 )
 
@@ -18,6 +19,7 @@ import (
 type Server struct {
 	httpServer *http.Server
 	healthSvc  *health.Service
+	httpflvSvc *httpflv.Service
 	rtmpServer *rtmp.Server
 	registry   *bus.Registry
 }
@@ -30,18 +32,28 @@ func New(cfg *config.Config) *Server {
 	healthSvc := health.New()
 	healthSvc.RegisterRoutes(mux)
 
+	// Create bus registry
+	registry := bus.NewRegistry()
+
+	// Create HTTP-FLV service
+	httpflvSvc := httpflv.NewService(registry)
+	httpflvSvc.RegisterRoutes(mux)
+
+	// Create RTMP server
+	rtmpServer := rtmp.NewServer(registry)
+
+	// HTTP server listens on HTTP port
+	// Health endpoint is also available on this port
+	// NOTE: Health port is kept for backward compatibility but not used
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.HealthPort),
+		Addr:    fmt.Sprintf(":%d", cfg.Server.HTTPPort),
 		Handler: mux,
 	}
-
-	// Create bus registry and RTMP server
-	registry := bus.NewRegistry()
-	rtmpServer := rtmp.NewServer(registry)
 
 	return &Server{
 		httpServer: httpServer,
 		healthSvc:  healthSvc,
+		httpflvSvc: httpflvSvc,
 		rtmpServer: rtmpServer,
 		registry:   registry,
 	}
