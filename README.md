@@ -13,7 +13,7 @@ A high-performance, modular media server written in Go.
 
 ## Status
 
-**Phase 7 Complete** - RTMP Ingest, HTTP-FLV, WebSocket-FLV, RTMP Relay & HTTP API
+**Phase 8 Complete** - RTMP Ingest, HTTP-FLV, WebSocket-FLV, RTMP Relay, HTTP API & FFmpeg Integration
 
 This server currently provides:
 - Clean startup and graceful shutdown
@@ -24,6 +24,7 @@ This server currently provides:
 - **WebSocket-FLV output** - Stream live media via WebSocket-FLV (`ws://host/ws/{app}/{name}`)
 - **RTMP relay** - Pull remote streams or push local streams to remote servers
 - **HTTP API** - Introspection and control endpoints (`/api/server`, `/api/streams`, `/api/relay`)
+- **FFmpeg integration** - Optional transcoding and packaging (build with `-tags ffmpeg`)
 - Core stream bus with efficient fanout
 - Integration tests
 - Documentation generation
@@ -33,10 +34,17 @@ This server currently provides:
 
 ### Build and Run
 
+**Default build (without FFmpeg):**
 ```bash
 make build
 make run
 ```
+
+**Build with FFmpeg support:**
+```bash
+go build -tags ffmpeg -o bin/nonchalant ./cmd/nonchalant
+```
+Requires FFmpeg development libraries installed.
 
 ### Run Tests
 

@@ -14,8 +14,9 @@ import (
 // Config holds the complete server configuration.
 // All fields must have explicit defaults or be required.
 type Config struct {
-	Server ServerConfig  `yaml:"server"`
-	Relays []RelayConfig `yaml:"relays,omitempty"`
+	Server    ServerConfig     `yaml:"server"`
+	Relays    []RelayConfig    `yaml:"relays,omitempty"`
+	Transcode *TranscodeConfig `yaml:"transcode,omitempty"`
 }
 
 // ServerConfig defines HTTP server settings.
@@ -32,6 +33,22 @@ type RelayConfig struct {
 	Mode      string `yaml:"mode"`                // "pull" or "push"
 	RemoteURL string `yaml:"remote_url"`          // Remote RTMP URL
 	Reconnect bool   `yaml:"reconnect,omitempty"` // Enable reconnect on failure
+}
+
+// TranscodeConfig defines transcoding configuration.
+// Only used when built with -tags ffmpeg.
+type TranscodeConfig struct {
+	Enabled  bool               `yaml:"enabled"`            // Enable transcoding
+	Profiles []TranscodeProfile `yaml:"profiles,omitempty"` // Transcoding profiles
+}
+
+// TranscodeProfile defines a transcoding profile.
+type TranscodeProfile struct {
+	Name      string `yaml:"name"`       // Profile name
+	App       string `yaml:"app"`        // Source application
+	Stream    string `yaml:"stream"`     // Source stream name
+	Format    string `yaml:"format"`     // Output format (hls, dash, etc.)
+	OutputURL string `yaml:"output_url"` // Output URL
 }
 
 // Load reads configuration from a YAML file.

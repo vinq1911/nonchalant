@@ -15,19 +15,21 @@ import (
 	"nonchalant/internal/svc/httpflv"
 	"nonchalant/internal/svc/relay"
 	"nonchalant/internal/svc/rtmp"
+	"nonchalant/internal/svc/transcode"
 	"nonchalant/internal/svc/wsflv"
 )
 
 // Server wraps the HTTP server and its dependencies.
 type Server struct {
-	httpServer *http.Server
-	healthSvc  *health.Service
-	apiSvc     *api.Service
-	httpflvSvc *httpflv.Service
-	wsflvSvc   *wsflv.Service
-	rtmpServer *rtmp.Server
-	relayMgr   *relay.Manager
-	registry   *bus.Registry
+	httpServer   *http.Server
+	healthSvc    *health.Service
+	apiSvc       *api.Service
+	httpflvSvc   *httpflv.Service
+	wsflvSvc     *wsflv.Service
+	rtmpServer   *rtmp.Server
+	relayMgr     *relay.Manager
+	transcodeMgr *transcode.Manager
+	registry     *bus.Registry
 }
 
 // New creates a new server instance with the given configuration.
@@ -55,6 +57,9 @@ func New(cfg *config.Config) *Server {
 	// Create relay manager
 	relayMgr := relay.NewManager(registry)
 
+	// Create transcode manager (optional, works with or without FFmpeg)
+	transcodeMgr := transcode.NewManager(registry)
+
 	// Create API service
 	apiSvc := api.NewService(registry, relayMgr)
 	apiSvc.RegisterRoutes(mux)
@@ -68,14 +73,15 @@ func New(cfg *config.Config) *Server {
 	}
 
 	return &Server{
-		httpServer: httpServer,
-		healthSvc:  healthSvc,
-		apiSvc:     apiSvc,
-		httpflvSvc: httpflvSvc,
-		wsflvSvc:   wsflvSvc,
-		rtmpServer: rtmpServer,
-		relayMgr:   relayMgr,
-		registry:   registry,
+		httpServer:   httpServer,
+		healthSvc:    healthSvc,
+		apiSvc:       apiSvc,
+		httpflvSvc:   httpflvSvc,
+		wsflvSvc:     wsflvSvc,
+		rtmpServer:   rtmpServer,
+		relayMgr:     relayMgr,
+		transcodeMgr: transcodeMgr,
+		registry:     registry,
 	}
 }
 
@@ -85,6 +91,13 @@ func (s *Server) Start(cfg *config.Config) error {
 	// Start relay tasks
 	if err := s.relayMgr.StartTasks(cfg); err != nil {
 		return fmt.Errorf("start relay tasks: %w", err)
+	}
+
+	// Start transcode tasks (optional, only if configured)
+	if s.transcodeMgr != nil {
+		if err := s.transcodeMgr.StartTasks(cfg); err != nil {
+			return fmt.Errorf("start transcode tasks: %w", err)
+		}
 	}
 
 	// Start RTMP server
@@ -116,6 +129,11 @@ func (s *Server) ShutdownWithTimeout() error {
 	// Stop relay manager
 	if s.relayMgr != nil {
 		s.relayMgr.Stop()
+	}
+
+	// Stop transcode manager
+	if s.transcodeMgr != nil {
+		s.transcodeMgr.Stop()
 	}
 
 	// Close RTMP server
