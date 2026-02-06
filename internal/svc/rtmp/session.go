@@ -147,6 +147,11 @@ func (s *ServiceSession) SendConnectResult(transID interface{}, objectEncoding f
 		return err
 	}
 
+	// Debug: log first bytes of encoded response
+	if len(body) > 0 {
+		log.Printf("Connect response: first byte=0x%02x (should be 0x02 for string), len=%d, first 20 bytes: %x", body[0], len(body), body[:min(20, len(body))])
+	}
+
 	return s.WriteMessage(3, rtmpprotocol.MessageTypeCommandAMF0, 0, 0, body)
 }
 
@@ -281,4 +286,12 @@ func createSetPeerBandwidthBody(size uint32, limitType byte) []byte {
 	binary.BigEndian.PutUint32(body[0:4], size)
 	body[4] = limitType
 	return body
+}
+
+// min returns the minimum of two integers.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
