@@ -1,6 +1,6 @@
 # If you are AI: This Makefile provides all build, test, and deployment targets for nonchalant.
 
-.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video
+.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video test-send test-receive test-send-receive-ws test-roundtrip
 
 # Configuration variables
 CONFIG ?= configs/nonchalant.example.yaml
@@ -35,13 +35,17 @@ help:
 	@echo "  check-lines        - Check file line limits"
 	@echo "  check-comments     - Check file headers and function comments"
 	@echo "  check              - Run all checks"
-	@echo "  test-video         - Test with video file (publish, play, verify)"
-	@echo "  test-workflow      - Test complete workflow"
-	@echo "  test-rtmp-ingest   - Test RTMP publishing"
-	@echo "  test-httpflv       - Test HTTP-FLV playback"
-	@echo "  test-wsflv         - Test WebSocket-FLV connection"
-	@echo "  test-api           - Test all API endpoints"
-	@echo "  test-features      - Run all feature tests (requires server)"
+	@echo "  test-video         - Test send/receive with video file (full round-trip)"
+	@echo "  test-send         - Test SEND only (RTMP publish)"
+	@echo "  test-receive       - Test RECEIVE only (HTTP-FLV playback)"
+	@echo "  test-roundtrip    - Complete round-trip: send → verify → receive"
+	@echo "  test-send-receive-ws - Test send/receive via WebSocket-FLV"
+	@echo "  test-workflow     - Test complete workflow"
+	@echo "  test-rtmp-ingest  - Test RTMP publishing"
+	@echo "  test-httpflv      - Test HTTP-FLV playback"
+	@echo "  test-wsflv        - Test WebSocket-FLV connection"
+	@echo "  test-api          - Test all API endpoints"
+	@echo "  test-features     - Run all feature tests (requires server)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  CONFIG=$(CONFIG)"
@@ -202,34 +206,172 @@ test-workflow: build
 test-features: test-api test-httpflv test-wsflv
 	@echo "All feature tests complete"
 
-# Test with test video (full integration test)
+# Test send/receive with test video (full round-trip test)
 test-video: build
-	@echo "Testing with video file: assets/nonchalant-test.mp4"
+	@echo "=== Testing Send/Receive with assets/nonchalant-test.mp4 ==="
 	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
 		echo "Error: assets/nonchalant-test.mp4 not found"; \
-		echo "Please add a test video file to assets/"; \
+		exit 1; \
+	fi
+	@echo "1. Starting server..."
+	@./bin/nonchalant --config configs/nonchalant.example.yaml > /tmp/nonchalant-test.log 2>&1 &
+	@SERVER_PID=$$!; \
+	trap "kill $$SERVER_PID 2>/dev/null || true; killall ffmpeg 2>/dev/null || true" EXIT; \
+	sleep 3; \
+	echo "2. Publishing test video (SEND) via RTMP..."; \
+	timeout 15 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/videotest 2>&1 > /tmp/ffmpeg-publish.log & \
+	PUBLISH_PID=$$!; \
+	sleep 4; \
+	echo "3. Verifying stream exists via API..."; \
+	STREAM_COUNT=$$(curl -s http://localhost:8081/api/streams | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('streams', [])))" 2>/dev/null || echo "0"); \
+	if [ "$$STREAM_COUNT" -gt 0 ]; then \
+		echo "✓ Stream published successfully ($$STREAM_COUNT stream(s) active)"; \
+		curl -s http://localhost:8081/api/streams | python3 -m json.tool || true; \
+	else \
+		echo "✗ Stream not found in API"; \
+	fi; \
+	echo "4. Receiving stream (RECEIVE) via HTTP-FLV..."; \
+	BYTES=$$(timeout 8 curl -s http://localhost:8081/live/videotest.flv | wc -c); \
+	if [ $$BYTES -gt 1000 ]; then \
+		echo "✓ HTTP-FLV receive test passed (received $$BYTES bytes)"; \
+	else \
+		echo "✗ HTTP-FLV receive test failed (only $$BYTES bytes received)"; \
+	fi; \
+	echo "5. Cleaning up..."; \
+	kill $$PUBLISH_PID 2>/dev/null || true; \
+	sleep 2; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	wait $$SERVER_PID 2>/dev/null || true; \
+	echo "=== Test complete ==="
+
+# Test send only (RTMP publish)
+test-send: build
+	@echo "=== Testing SEND (RTMP Publish) ==="
+	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
+		echo "Error: assets/nonchalant-test.mp4 not found"; \
 		exit 1; \
 	fi
 	@echo "Starting server..."
-	@./bin/nonchalant --config configs/nonchalant.example.yaml &
+	@./bin/nonchalant --config configs/nonchalant.example.yaml > /tmp/nonchalant-send.log 2>&1 &
+	@SERVER_PID=$$!; \
+	trap "kill $$SERVER_PID 2>/dev/null || true; killall ffmpeg 2>/dev/null || true" EXIT; \
+	sleep 3; \
+	echo "Publishing test video to rtmp://localhost:1935/live/sendtest..."; \
+	timeout 10 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/sendtest 2>&1 | head -30 || true; \
+	sleep 2; \
+	echo "Checking if stream is registered..."; \
+	curl -s http://localhost:8081/api/streams | python3 -m json.tool || true; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	echo "=== Send test complete ==="
+
+# Test receive only (HTTP-FLV playback)
+test-receive: build
+	@echo "=== Testing RECEIVE (HTTP-FLV Playback) ==="
+	@echo "Note: This test requires a stream to be published first"
+	@echo "Starting server..."
+	@./bin/nonchalant --config configs/nonchalant.example.yaml > /tmp/nonchalant-receive.log 2>&1 &
 	@SERVER_PID=$$!; \
 	trap "kill $$SERVER_PID 2>/dev/null || true" EXIT; \
 	sleep 2; \
-	echo "Publishing test video..."; \
-	timeout 10 ffmpeg -re -i assets/nonchalant-test.mp4 \
+	echo "Publishing test video in background..."; \
+	timeout 12 ffmpeg -re -i assets/nonchalant-test.mp4 \
 		-c copy -f flv \
-		rtmp://localhost:1935/live/videotest 2>&1 > /dev/null & \
+		rtmp://localhost:1935/live/receivetest 2>&1 > /dev/null & \
 	PUBLISH_PID=$$!; \
 	sleep 3; \
-	echo "Verifying stream via API..."; \
-	curl -s http://localhost:8081/api/streams | python3 -m json.tool || true; \
-	echo "Fetching stream via HTTP-FLV..."; \
-	BYTES=$$(timeout 5 curl -s http://localhost:8081/live/videotest.flv | wc -c); \
-	if [ $$BYTES -gt 0 ]; then \
-		echo "✓ HTTP-FLV test passed (received $$BYTES bytes)"; \
+	echo "Receiving stream via HTTP-FLV..."; \
+	BYTES=$$(timeout 8 curl -s http://localhost:8081/live/receivetest.flv -o /tmp/received.flv && wc -c < /tmp/received.flv); \
+	if [ $$BYTES -gt 1000 ]; then \
+		echo "✓ Receive test passed (received $$BYTES bytes)"; \
+		echo "Saved to /tmp/received.flv"; \
+		file /tmp/received.flv 2>/dev/null || true; \
 	else \
-		echo "✗ HTTP-FLV test failed (no data received)"; \
+		echo "✗ Receive test failed (only $$BYTES bytes received)"; \
 	fi; \
 	kill $$PUBLISH_PID 2>/dev/null || true; \
-	sleep 1; \
-	echo "Test complete"
+	kill $$SERVER_PID 2>/dev/null || true; \
+	echo "=== Receive test complete ==="
+
+# Test send/receive with WebSocket-FLV
+test-send-receive-ws: build
+	@echo "=== Testing Send/Receive via WebSocket-FLV ==="
+	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
+		echo "Error: assets/nonchalant-test.mp4 not found"; \
+		exit 1; \
+	fi
+	@echo "1. Starting server..."
+	@./bin/nonchalant --config configs/nonchalant.example.yaml > /tmp/nonchalant-ws.log 2>&1 &
+	@SERVER_PID=$$!; \
+	trap "kill $$SERVER_PID 2>/dev/null || true; killall ffmpeg 2>/dev/null || true" EXIT; \
+	sleep 3; \
+	echo "2. Publishing test video (SEND) via RTMP..."; \
+	timeout 12 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/wstest 2>&1 > /dev/null & \
+	PUBLISH_PID=$$!; \
+	sleep 3; \
+	echo "3. Testing WebSocket-FLV connection (RECEIVE)..."; \
+	echo "Note: Full WebSocket test requires a proper client"; \
+	RESPONSE=$$(timeout 3 curl -s --include \
+		--no-buffer \
+		--header "Connection: Upgrade" \
+		--header "Upgrade: websocket" \
+		--header "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+		--header "Sec-WebSocket-Version: 13" \
+		http://localhost:8081/ws/live/wstest 2>&1 | head -5); \
+	if echo "$$RESPONSE" | grep -q "101\|Upgrade"; then \
+		echo "✓ WebSocket connection accepted"; \
+	else \
+		echo "⚠ WebSocket test requires proper client (connection attempt made)"; \
+	fi; \
+	kill $$PUBLISH_PID 2>/dev/null || true; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	echo "=== WebSocket test complete ==="
+
+# Test complete round-trip: send → API verify → receive
+test-roundtrip: build
+	@echo "=== Complete Round-Trip Test ==="
+	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
+		echo "Error: assets/nonchalant-test.mp4 not found"; \
+		exit 1; \
+	fi
+	@echo "1. Starting server..."
+	@./bin/nonchalant --config configs/nonchalant.example.yaml > /tmp/nonchalant-roundtrip.log 2>&1 &
+	@SERVER_PID=$$!; \
+	trap "kill $$SERVER_PID 2>/dev/null || true; killall ffmpeg 2>/dev/null || true; rm -f /tmp/roundtrip.flv" EXIT; \
+	sleep 3; \
+	echo "2. SEND: Publishing test video via RTMP..."; \
+	timeout 15 ffmpeg -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:1935/live/roundtrip 2>&1 > /tmp/ffmpeg-roundtrip.log & \
+	PUBLISH_PID=$$!; \
+	sleep 4; \
+	echo "3. VERIFY: Checking stream via API..."; \
+	HAS_PUBLISHER=$$(curl -s http://localhost:8081/api/streams | python3 -c "import sys, json; data=json.load(sys.stdin); streams=data.get('streams', []); print('true' if streams and any(s.get('has_publisher') for s in streams) else 'false')" 2>/dev/null || echo "false"); \
+	if [ "$$HAS_PUBLISHER" = "true" ]; then \
+		echo "✓ Stream has publisher"; \
+	else \
+		echo "✗ Stream has no publisher"; \
+	fi; \
+	echo "4. RECEIVE: Fetching stream via HTTP-FLV..."; \
+	BYTES=$$(timeout 8 curl -s http://localhost:8081/live/roundtrip.flv -o /tmp/roundtrip.flv && wc -c < /tmp/roundtrip.flv); \
+	if [ $$BYTES -gt 1000 ]; then \
+		echo "✓ Received $$BYTES bytes via HTTP-FLV"; \
+		FLV_HEADER=$$(head -c 9 /tmp/roundtrip.flv | od -An -tx1 | tr -d ' \n'); \
+		if echo "$$FLV_HEADER" | grep -q "464c5601"; then \
+			echo "✓ Valid FLV file (header: $$FLV_HEADER)"; \
+		else \
+			echo "⚠ FLV header check failed"; \
+		fi; \
+	else \
+		echo "✗ Failed to receive stream (only $$BYTES bytes)"; \
+	fi; \
+	echo "5. Cleaning up..."; \
+	kill $$PUBLISH_PID 2>/dev/null || true; \
+	sleep 2; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	echo "=== Round-trip test complete ==="

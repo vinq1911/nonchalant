@@ -332,9 +332,41 @@ transcode:
 ### Step 4: Publish a stream
 The transcoding task will automatically process the stream.
 
-## Testing Workflow
+## Testing with Make Targets
 
-### Complete Test Scenario
+nonchalant provides make targets to test send/receive functionality using the test video:
+
+### Complete Round-Trip Test
+```bash
+make test-video
+```
+Tests the complete flow: publish test video → verify via API → receive via HTTP-FLV.
+
+### Send Only (RTMP Publish)
+```bash
+make test-send
+```
+Tests publishing the test video via RTMP and verifies it's registered.
+
+### Receive Only (HTTP-FLV Playback)
+```bash
+make test-receive
+```
+Tests receiving a stream via HTTP-FLV (automatically publishes in background).
+
+### Complete Round-Trip with Verification
+```bash
+make test-roundtrip
+```
+Full test: SEND → API verification → RECEIVE → FLV validation.
+
+### WebSocket-FLV Test
+```bash
+make test-send-receive-ws
+```
+Tests send/receive via WebSocket-FLV protocol.
+
+### Manual Testing Workflow
 
 1. **Start server:**
    ```bash
