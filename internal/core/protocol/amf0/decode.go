@@ -127,26 +127,25 @@ func decodeECMAArray(r io.Reader) (Object, error) {
 	return decodeObject(r)
 }
 
-// DecodeCommand decodes an AMF0 command message (array of values).
+// DecodeCommand decodes an AMF0 command message.
+// RTMP commands are a sequence of AMF0 values (not a strict array).
+// Format: command_name (string), transaction_id (number), command_object (object/null), ...args
 func DecodeCommand(r io.Reader) (Array, error) {
-	var typeMarker byte
-	if err := binary.Read(r, binary.BigEndian, &typeMarker); err != nil {
-		return nil, err
-	}
-	if typeMarker != TypeStrictArray {
-		return nil, ErrUnexpectedType
-	}
-	var count uint32
-	if err := binary.Read(r, binary.BigEndian, &count); err != nil {
-		return nil, err
-	}
-	arr := make(Array, count)
-	for i := uint32(0); i < count; i++ {
+	arr := make(Array, 0, 4)
+
+	// Read values until we can't read more
+	// RTMP commands have at least 2 values (command name, transaction ID)
+	for {
 		val, err := Decode(r)
 		if err != nil {
+			// If we got at least the command name, return what we have
+			// This handles cases where command object might be missing or truncated
+			if len(arr) >= 1 {
+				return arr, nil
+			}
+			// If we got nothing, return the error
 			return nil, err
 		}
-		arr[i] = val
+		arr = append(arr, val)
 	}
-	return arr, nil
 }

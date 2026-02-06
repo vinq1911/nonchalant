@@ -36,9 +36,19 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 	}
 
 	// Extract app name from command object
-	cmdObj, ok := command[1].(amf0.Object)
-	if !ok {
-		return fmt.Errorf("invalid connect command object")
+	// Command object can be Object or ECMAArray (both are treated as Object)
+	var cmdObj amf0.Object
+	switch v := command[1].(type) {
+	case amf0.Object:
+		cmdObj = v
+	case map[string]interface{}:
+		// Convert to Object type
+		cmdObj = make(amf0.Object)
+		for k, val := range v {
+			cmdObj[k] = val
+		}
+	default:
+		return fmt.Errorf("invalid connect command object type: %T", v)
 	}
 
 	app, ok := cmdObj["app"].(string)
