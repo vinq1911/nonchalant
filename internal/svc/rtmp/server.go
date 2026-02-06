@@ -96,6 +96,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
+		// Track bytes read for ACK (read chunk header + payload)
+		// NOTE: We need to track total bytes read, not just payload
+		// For simplicity, track payload bytes here; header bytes are small
+		bytesRead := session.GetBytesReadForChunk(csID)
+		if bytesRead > 0 {
+			// Record bytes and send ACK if needed
+			if _, err := session.RecordBytesReceived(bytesRead); err != nil {
+				log.Printf("Failed to send ACK: %v", err)
+				// Don't return, continue processing
+			}
+		}
+
 		// Get complete message if available
 		body, msgType, timestamp, streamID, complete := session.GetCompleteMessage(csID)
 		if !complete {

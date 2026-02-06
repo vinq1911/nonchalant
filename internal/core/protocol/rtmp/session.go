@@ -28,7 +28,11 @@ type Session struct {
 	app        string
 	streamName string
 	streamID   uint32
-	mu         sync.RWMutex
+	// ACK tracking for RTMP protocol
+	ackSize   uint32 // Window acknowledgement size we sent to client
+	inAckSize uint32 // Total bytes received from client
+	inLastAck uint32 // Last ACK value we sent
+	mu        sync.RWMutex
 }
 
 // NewSession creates a new RTMP session.
@@ -38,6 +42,7 @@ func NewSession(conn io.ReadWriter) *Session {
 		parser:    NewChunkParser(),
 		state:     StateHandshaking,
 		chunkSize: DefaultChunkSize,
+		ackSize:   0, // Will be set when we send Window Acknowledgement Size
 	}
 }
 
@@ -72,6 +77,49 @@ func (s *Session) WriteMessage(csID uint32, msgType byte, timestamp uint32, stre
 	chunkSize := s.chunkSize
 	s.mu.RUnlock()
 	return WriteChunk(s.conn, csID, msgType, timestamp, streamID, body, chunkSize)
+}
+
+// SetAckSize sets the window acknowledgement size (sent to client).
+// This tells the client how often we will acknowledge bytes received.
+func (s *Session) SetAckSize(size uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ackSize = size
+}
+
+// RecordBytesReceived records bytes received from client and sends ACK if needed.
+// Returns true if an ACK was sent.
+func (s *Session) RecordBytesReceived(bytesRead uint32) (bool, error) {
+	s.mu.Lock()
+	s.inAckSize += bytesRead
+	// Handle overflow (RTMP spec: reset at 0xf0000000)
+	if s.inAckSize >= 0xf0000000 {
+		s.inAckSize = 0
+		s.inLastAck = 0
+	}
+	ackSize := s.ackSize
+	inAckSize := s.inAckSize
+	inLastAck := s.inLastAck
+	s.mu.Unlock()
+
+	// Send ACK if we've received enough bytes
+	if ackSize > 0 && inAckSize-inLastAck >= ackSize {
+		if err := s.SendACK(inAckSize); err != nil {
+			return false, err
+		}
+		s.mu.Lock()
+		s.inLastAck = inAckSize
+		s.mu.Unlock()
+		return true, nil
+	}
+	return false, nil
+}
+
+// SendACK sends an acknowledgement message to the client.
+func (s *Session) SendACK(ackSize uint32) error {
+	body := make([]byte, 4)
+	binary.BigEndian.PutUint32(body, ackSize)
+	return s.WriteMessage(2, MessageTypeAck, 0, 0, body)
 }
 
 // SetChunkSize sets the chunk size for this session.

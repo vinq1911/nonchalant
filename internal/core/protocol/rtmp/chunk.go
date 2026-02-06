@@ -136,6 +136,18 @@ func (p *ChunkParser) ReadChunk(r io.Reader) (uint32, error) {
 	return csID, nil
 }
 
+// GetBytesReadForChunk returns the number of bytes read for a specific chunk stream.
+// This is used for ACK tracking.
+func (p *ChunkParser) GetBytesReadForChunk(csID uint32) uint32 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	cs, exists := p.chunkStreams[csID]
+	if !exists {
+		return 0
+	}
+	return cs.bytesRead
+}
+
 // readMessageHeader reads the message header based on format type.
 func (p *ChunkParser) readMessageHeader(r io.Reader, cs *ChunkStream, fmt byte) error {
 	switch fmt {
