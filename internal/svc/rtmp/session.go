@@ -74,12 +74,12 @@ func (s *ServiceSession) HandleConnect(command amf0.Array) error {
 
 	// Send window acknowledgement size, peer bandwidth, and chunk size
 	// These MUST be sent AFTER connect command but BEFORE connect response
-	ackSize := createWindowAckSize(5000000)
+	ackSize := createWindowAckSizeBody(5000000)
 	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeWinAckSize, 0, 0, ackSize); err != nil {
 		return fmt.Errorf("failed to send window ack size: %w", err)
 	}
 
-	peerBW := createSetPeerBandwidth(5000000, 2)
+	peerBW := createSetPeerBandwidthBody(5000000, 2)
 	if err := s.WriteMessage(2, rtmpprotocol.MessageTypeSetPeerBandwidth, 0, 0, peerBW); err != nil {
 		return fmt.Errorf("failed to send set peer bandwidth: %w", err)
 	}
