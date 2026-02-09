@@ -114,3 +114,64 @@ func TestRingBufferMultipleReads(t *testing.T) {
 		t.Error("Read should fail on empty buffer")
 	}
 }
+
+// TestRingBufferWrapAround verifies that the ring buffer works correctly after
+// more messages have been written+read than the buffer size. This catches the
+// bug where writePos was masked but readPos was not, causing the emptiness
+// check to fail after exactly `size` messages.
+func TestRingBufferWrapAround(t *testing.T) {
+	rb := NewRingBuffer(4, BackpressureDropOldest) // actual size = 4
+
+	// Write and read 3x the buffer capacity (12 messages through a size-4 buffer)
+	for round := 0; round < 3; round++ {
+		for i := 0; i < 4; i++ {
+			msg := AcquireMessage()
+			msg.Timestamp = uint32(round*100 + i)
+			if !rb.Write(msg) {
+				t.Fatalf("Round %d write %d failed", round, i)
+			}
+		}
+		for i := 0; i < 4; i++ {
+			msg, ok := rb.Read()
+			if !ok {
+				t.Fatalf("Round %d read %d: buffer unexpectedly empty", round, i)
+			}
+			expected := uint32(round*100 + i)
+			if msg.Timestamp != expected {
+				t.Fatalf("Round %d read %d: expected ts %d, got %d", round, i, expected, msg.Timestamp)
+			}
+		}
+
+		// After draining, buffer must be empty
+		if _, ok := rb.Read(); ok {
+			t.Fatalf("Round %d: buffer should be empty after draining", round)
+		}
+	}
+}
+
+// TestRingBufferInterleavedWrapAround verifies interleaved write/read across
+// multiple wrap-arounds of the internal counter.
+func TestRingBufferInterleavedWrapAround(t *testing.T) {
+	rb := NewRingBuffer(4, BackpressureDropOldest)
+
+	// Write 1, read 1, repeat many times (well past buffer size)
+	for i := 0; i < 100; i++ {
+		msg := AcquireMessage()
+		msg.Timestamp = uint32(i)
+		if !rb.Write(msg) {
+			t.Fatalf("Write %d failed", i)
+		}
+		got, ok := rb.Read()
+		if !ok {
+			t.Fatalf("Read %d: buffer unexpectedly empty", i)
+		}
+		if got.Timestamp != uint32(i) {
+			t.Fatalf("Read %d: expected ts %d, got %d", i, i, got.Timestamp)
+		}
+	}
+
+	// Buffer must be empty
+	if _, ok := rb.Read(); ok {
+		t.Fatal("Buffer should be empty after all reads")
+	}
+}

@@ -65,11 +65,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set response headers BEFORE writing body — Go sends headers on first Write
+	// NOTE: Do not set Transfer-Encoding — Go net/http handles chunked encoding automatically.
+	w.Header().Set("Content-Type", "video/x-flv")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
 	// Create subscriber
 	sub := NewSubscriber(w, stream)
 	defer sub.Detach()
 
-	// Attach to stream
+	// Attach to stream (replays cached init messages — sequence headers)
 	sub.Attach()
 
 	// Write FLV header
@@ -78,12 +84,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := sub.WriteHeader(true, true); err != nil {
 		return
 	}
-
-	// Set response headers
-	w.Header().Set("Content-Type", "video/x-flv")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.(http.Flusher).Flush()
 
 	// Process messages until connection closes
 	// NOTE: This blocks until client disconnects or error occurs

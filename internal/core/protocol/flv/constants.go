@@ -42,3 +42,9 @@ const (
 	AVCPacketTypeSequenceHeader = 0
 	AVCPacketTypeNALU           = 1
 )
+
+// IsVideoKeyframe returns true if the FLV video payload represents a keyframe.
+// In RTMP/FLV format: byte[0] upper nibble = frame type (1=keyframe).
+func IsVideoKeyframe(payload []byte) bool {
+	return len(payload) >= 1 && (payload[0]>>4) == VideoFrameKeyFrame
+}

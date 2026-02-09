@@ -1,9 +1,10 @@
 // If you are AI: This file handles RTMP publish lifecycle and integration with the bus.
-// Manages publisher attachment and media message publishing.
+// Manages publisher attachment, media message publishing, and sequence header detection.
 
 package rtmp
 
 import (
+	"log"
 	"nonchalant/internal/core/bus"
 	rtmpprotocol "nonchalant/internal/core/protocol/rtmp"
 )
@@ -28,47 +29,65 @@ func NewPublisher(session *rtmpprotocol.Session, stream *bus.Stream, publisherID
 }
 
 // PublishAudio publishes an audio message to the stream.
-// Uses pooled message and payload from the bus.
+// Detects AAC sequence headers and marks them as init data for late-joining subscribers.
 func (p *Publisher) PublishAudio(timestamp uint32, payload []byte) {
 	msg := bus.AcquireMessage()
 	msg.Type = bus.MessageTypeAudio
 	msg.Timestamp = timestamp
+	msg.IsInit = isAACSequenceHeader(payload)
 
-	// Acquire payload buffer from pool
 	buf := bus.AcquirePayload()
 	msg.Payload = append(buf, payload...)
 
-	p.stream.Publish(msg)
+	if msg.IsInit {
+		log.Printf("Cached AAC sequence header (%d bytes)", len(payload))
+	}
 
-	// NOTE: Message ownership transfers to stream/subscribers
-	// Publisher should not release the message here
+	p.stream.Publish(msg)
 }
 
 // PublishVideo publishes a video message to the stream.
-// Uses pooled message and payload from the bus.
+// Detects AVC sequence headers and marks them as init data for late-joining subscribers.
 func (p *Publisher) PublishVideo(timestamp uint32, payload []byte) {
 	msg := bus.AcquireMessage()
 	msg.Type = bus.MessageTypeVideo
 	msg.Timestamp = timestamp
+	msg.IsInit = isAVCSequenceHeader(payload)
 
-	// Acquire payload buffer from pool
 	buf := bus.AcquirePayload()
 	msg.Payload = append(buf, payload...)
+
+	if msg.IsInit {
+		log.Printf("Cached AVC sequence header (%d bytes)", len(payload))
+	}
 
 	p.stream.Publish(msg)
 }
 
 // PublishMetadata publishes a metadata message to the stream.
+// Metadata (@setDataFrame / onMetaData) is always treated as init data.
 func (p *Publisher) PublishMetadata(timestamp uint32, payload []byte) {
 	msg := bus.AcquireMessage()
 	msg.Type = bus.MessageTypeMetadata
 	msg.Timestamp = timestamp
+	msg.IsInit = true // Metadata is always init data
 
-	// Acquire payload buffer from pool
 	buf := bus.AcquirePayload()
 	msg.Payload = append(buf, payload...)
 
 	p.stream.Publish(msg)
+}
+
+// isAVCSequenceHeader detects an AVC (H.264) decoder configuration record.
+// In RTMP/FLV video format: byte[0] lower nibble = codec ID (7=AVC), byte[1] = packet type (0=seq header).
+func isAVCSequenceHeader(payload []byte) bool {
+	return len(payload) >= 2 && (payload[0]&0x0F) == 7 && payload[1] == 0
+}
+
+// isAACSequenceHeader detects an AAC AudioSpecificConfig.
+// In RTMP/FLV audio format: byte[0] upper nibble = sound format (10=AAC), byte[1] = packet type (0=seq header).
+func isAACSequenceHeader(payload []byte) bool {
+	return len(payload) >= 2 && (payload[0]>>4) == 10 && payload[1] == 0
 }
 
 // Detach detaches the publisher from the stream.

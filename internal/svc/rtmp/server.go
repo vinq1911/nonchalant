@@ -5,7 +5,6 @@ package rtmp
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -23,9 +22,7 @@ type Server struct {
 
 // NewServer creates a new RTMP server.
 func NewServer(registry *bus.Registry) *Server {
-	return &Server{
-		registry: registry,
-	}
+	return &Server{registry: registry}
 }
 
 // Listen starts listening on the specified address.
@@ -38,7 +35,7 @@ func (s *Server) Listen(addr string) error {
 	return nil
 }
 
-// Accept accepts a new connection and handles it in a goroutine.
+// Accept accepts connections and handles them in goroutines.
 func (s *Server) Accept() error {
 	for {
 		conn, err := s.listener.Accept()
@@ -49,7 +46,14 @@ func (s *Server) Accept() error {
 	}
 }
 
+// sessionConn wraps net.Conn to implement io.ReadWriter for the session.
+type sessionConn struct {
+	net.Conn
+}
+
 // handleConnection handles a single RTMP connection.
+// NOTE: SetChunkSize, WindowAckSize, PeerBandwidth are sent during HandleConnect
+// (matching node-media-server order), not immediately after handshake.
 func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -57,37 +61,20 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 	}()
 
-	// Create service session
-	session := NewServiceSession(conn, s.registry)
+	sc := &sessionConn{Conn: conn}
+	session := NewServiceSession(sc, s.registry)
 	defer session.Close()
 
-	// Perform handshake
 	if err := session.PerformHandshake(); err != nil {
-		// Log handshake errors but don't spam logs for invalid version
 		if err.Error() == "invalid RTMP version" {
-			// This might be a browser trying to connect via HTTP, or leftover data
-			// Just close silently
-			return
+			return // Silently close non-RTMP connections
 		}
 		log.Printf("Handshake failed: %v", err)
 		return
 	}
 
-	// Send Set Chunk Size immediately after handshake (before any commands)
-	// This matches go2rtc's approach
-	chunkSize := rtmpprotocol.CreateSetChunkSize(4096)
-	if err := session.WriteMessage(2, rtmpprotocol.MessageTypeSetChunkSize, 0, 0, chunkSize); err != nil {
-		log.Printf("Failed to send initial chunk size: %v", err)
-		return
-	}
-	session.SetChunkSize(4096)
-
-	// NOTE: Window ACK, peer bandwidth, and chunk size are sent AFTER connect command
-	// but BEFORE connect response (see HandleConnect)
-
 	// Main message loop
 	for {
-		// Read chunk
 		csID, err := session.ReadChunk()
 		if err != nil {
 			if err != io.EOF {
@@ -96,30 +83,19 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		// Track bytes read for ACK (read chunk header + payload)
-		// NOTE: We need to track total bytes read, not just payload
-		// For simplicity, track payload bytes here; header bytes are small
-		bytesRead := session.GetBytesReadForChunk(csID)
+		// ACK tracking
+		bytesRead := session.Session.GetBytesReadForChunk(csID)
 		if bytesRead > 0 {
-			// Record bytes and send ACK if needed
-			if _, err := session.RecordBytesReceived(bytesRead); err != nil {
+			if _, err := session.Session.RecordBytesReceived(bytesRead); err != nil {
 				log.Printf("Failed to send ACK: %v", err)
-				// Don't return, continue processing
 			}
 		}
 
-		// Get complete message if available
 		body, msgType, timestamp, streamID, complete := session.GetCompleteMessage(csID)
 		if !complete {
 			continue
 		}
 
-		// Debug: log all message types to trace protocol flow
-		if msgType == rtmpprotocol.MessageTypeCommandAMF0 || msgType == rtmpprotocol.MessageTypeAudio || msgType == rtmpprotocol.MessageTypeVideo {
-			log.Printf("Received message: type=%d (csID=%d, streamID=%d, len=%d)", msgType, csID, streamID, len(body))
-		}
-
-		// Handle message based on type
 		switch msgType {
 		case rtmpprotocol.MessageTypeSetChunkSize:
 			size, err := rtmpprotocol.ParseSetChunkSize(body)
@@ -127,49 +103,41 @@ func (s *Server) handleConnection(conn net.Conn) {
 				log.Printf("Failed to parse set chunk size: %v", err)
 				continue
 			}
-			session.SetChunkSize(size)
+			// Update READ chunk size only — this is the client's sending chunk size
+			session.SetReadChunkSize(size)
+			log.Printf("Client set chunk size: %d", size)
+
+		case rtmpprotocol.MessageTypeWinAckSize:
+			// Client's window ack size — acknowledge receipt, no action needed
+			log.Printf("Client set window ack size")
 
 		case rtmpprotocol.MessageTypeUserCtrl:
-			// Handle user control messages (ping, stream begin, etc.)
-			// Most don't require a response, just continue
+			// User control messages (ping, stream begin, etc.) — no response needed
 
 		case rtmpprotocol.MessageTypeCommandAMF0:
 			if err := s.handleCommand(session, body, streamID); err != nil {
-				log.Printf("Command handling error: %v", err)
+				log.Printf("Command error: %v", err)
 				return
 			}
 
-		case rtmpprotocol.MessageTypeAudio, rtmpprotocol.MessageTypeVideo, rtmpprotocol.MessageTypeDataAMF0:
+		case rtmpprotocol.MessageTypeAudio, rtmpprotocol.MessageTypeVideo,
+			rtmpprotocol.MessageTypeDataAMF0:
 			session.HandleMediaMessage(msgType, timestamp, body)
 
 		default:
-			// NOTE: Other message types are ignored
+			// NOTE: Other message types (abort, ack, peer bandwidth) are ignored
 		}
 	}
 }
 
 // handleCommand handles AMF0 command messages.
-// streamID is the stream ID from the message header (used for publish/play commands).
+// streamID is the stream ID from the message header.
 func (s *Server) handleCommand(session *ServiceSession, body []byte, streamID uint32) error {
-	// Decode command (only command name and transaction ID, skips rest)
 	command, err := amf0.DecodeCommand(bytes.NewReader(body))
 	if err != nil {
-		// Log diagnostic info before returning error
-		hexDump := ""
-		if len(body) > 0 {
-			hexDump = fmt.Sprintf(" (first byte: 0x%02x", body[0])
-			if len(body) > 1 {
-				hexDump += fmt.Sprintf(", second: 0x%02x", body[1])
-			}
-			if len(body) > 15 {
-				hexDump += fmt.Sprintf(", bytes 0-15: %x", body[:16])
-			}
-			hexDump += ")"
-		}
-		log.Printf("Failed to decode command: %v (body length: %d)%s", err, len(body), hexDump)
+		logDecodeError(body, err)
 		return err
 	}
-
 	if len(command) == 0 {
 		return nil
 	}
@@ -181,33 +149,43 @@ func (s *Server) handleCommand(session *ServiceSession, body []byte, streamID ui
 
 	switch cmdName {
 	case "connect":
-		if err := session.HandleConnect(command); err != nil {
-			return err
-		}
-		log.Printf("Command handled: connect")
-		return nil
+		log.Printf("Command: connect")
+		return session.HandleConnect(command)
+	case "releaseStream":
+		log.Printf("Command: releaseStream")
+		return session.HandleReleaseStream(command)
+	case "FCPublish":
+		log.Printf("Command: FCPublish")
+		return session.HandleFCPublish(command)
 	case "createStream":
-		if err := session.HandleCreateStream(command); err != nil {
-			return err
-		}
-		log.Printf("Command handled: createStream")
-		return nil
+		log.Printf("Command: createStream")
+		return session.HandleCreateStream(command)
 	case "publish":
-		if err := session.HandlePublish(command, streamID); err != nil {
-			return err
-		}
-		log.Printf("Command handled: publish (streamID=%d)", streamID)
-		return nil
+		log.Printf("Command: publish (streamID=%d)", streamID)
+		return session.HandlePublish(command, streamID)
 	case "deleteStream", "closeStream":
-		// Handle unpublish
-		log.Printf("Command handled: %s (unpublish)", cmdName)
+		log.Printf("Command: %s", cmdName)
 		session.Close()
 		return nil
+	case "FCUnpublish":
+		log.Printf("Command: FCUnpublish (ignored)")
+		return nil
 	default:
-		// NOTE: Unknown commands are ignored
-		log.Printf("Command ignored: %s", cmdName)
+		log.Printf("Command: %s (unhandled)", cmdName)
 		return nil
 	}
+}
+
+// logDecodeError logs diagnostic info for failed AMF0 decoding.
+func logDecodeError(body []byte, err error) {
+	hex := ""
+	if len(body) > 0 {
+		hex = fmt.Sprintf(" first_byte=0x%02x", body[0])
+		if len(body) > 15 {
+			hex += fmt.Sprintf(" hex=%x", body[:16])
+		}
+	}
+	log.Printf("Failed to decode command: %v (len=%d%s)", err, len(body), hex)
 }
 
 // Close closes the server.
@@ -216,19 +194,4 @@ func (s *Server) Close() error {
 		return s.listener.Close()
 	}
 	return nil
-}
-
-// CreateWindowAckSize creates a window acknowledgement size message.
-func CreateWindowAckSize(size uint32) []byte {
-	body := make([]byte, 4)
-	binary.BigEndian.PutUint32(body, size)
-	return body
-}
-
-// CreateSetPeerBandwidth creates a set peer bandwidth message.
-func CreateSetPeerBandwidth(size uint32, limitType byte) []byte {
-	body := make([]byte, 5)
-	binary.BigEndian.PutUint32(body[0:4], size)
-	body[4] = limitType
-	return body
 }

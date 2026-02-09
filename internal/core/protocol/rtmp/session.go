@@ -21,14 +21,15 @@ const (
 
 // Session manages an RTMP connection session.
 // Handles chunk parsing, message routing, and state management.
+// NOTE: readChunkSize (parser) and writeChunkSize are independent per RTMP spec.
 type Session struct {
-	conn       io.ReadWriter
-	parser     *ChunkParser
-	state      SessionState
-	chunkSize  uint32
-	app        string
-	streamName string
-	streamID   uint32
+	conn           io.ReadWriter
+	parser         *ChunkParser
+	state          SessionState
+	writeChunkSize uint32 // Chunk size for outgoing messages
+	app            string
+	streamName     string
+	streamID       uint32
 	// ACK tracking for RTMP protocol
 	ackSize   uint32 // Window acknowledgement size we sent to client
 	inAckSize uint32 // Total bytes received from client
@@ -36,14 +37,14 @@ type Session struct {
 	mu        sync.RWMutex
 }
 
-// NewSession creates a new RTMP session.
+// NewSession creates a new RTMP session with default chunk sizes.
 func NewSession(conn io.ReadWriter) *Session {
 	return &Session{
-		conn:      conn,
-		parser:    NewChunkParser(),
-		state:     StateHandshaking,
-		chunkSize: DefaultChunkSize,
-		ackSize:   0, // Will be set when we send Window Acknowledgement Size
+		conn:           conn,
+		parser:         NewChunkParser(),
+		state:          StateHandshaking,
+		writeChunkSize: DefaultChunkSize,
+		ackSize:        0, // Will be set when we send Window Acknowledgement Size
 	}
 }
 
@@ -66,18 +67,37 @@ func (s *Session) ReadChunk() (uint32, error) {
 	return s.parser.ReadChunk(s.conn)
 }
 
+// GetBytesReadForChunk returns bytes read for a chunk stream (for ACK tracking).
+func (s *Session) GetBytesReadForChunk(csID uint32) uint32 {
+	return s.parser.GetBytesReadForChunk(csID)
+}
+
 // GetCompleteMessage gets a complete message if available.
 // Returns: body, messageType, timestamp, streamID, complete
 func (s *Session) GetCompleteMessage(csID uint32) ([]byte, byte, uint32, uint32, bool) {
 	return s.parser.GetCompleteMessage(csID)
 }
 
-// WriteMessage writes a message as chunks.
+// WriteMessage writes a message as chunks using the session's write chunk size.
 func (s *Session) WriteMessage(csID uint32, msgType byte, timestamp uint32, streamID uint32, body []byte) error {
 	s.mu.RLock()
-	chunkSize := s.chunkSize
+	chunkSize := s.writeChunkSize
 	s.mu.RUnlock()
 	return WriteChunk(s.conn, csID, msgType, timestamp, streamID, body, chunkSize)
+}
+
+// SetWriteChunkSize sets the outgoing (write) chunk size.
+// Call this after sending a SetChunkSize message to the client.
+func (s *Session) SetWriteChunkSize(size uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writeChunkSize = size
+}
+
+// SetReadChunkSize sets the incoming (read) chunk size in the parser.
+// Call this ONLY when receiving a SetChunkSize message from the client.
+func (s *Session) SetReadChunkSize(size uint32) {
+	s.parser.SetChunkSize(size)
 }
 
 // SetAckSize sets the window acknowledgement size (sent to client).
@@ -123,19 +143,11 @@ func (s *Session) SendACK(ackSize uint32) error {
 	return s.WriteMessage(2, MessageTypeAck, 0, 0, body)
 }
 
-// SetChunkSize sets the chunk size for this session.
-func (s *Session) SetChunkSize(size uint32) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.chunkSize = size
-	s.parser.SetChunkSize(size)
-}
-
-// GetChunkSize returns the current chunk size.
-func (s *Session) GetChunkSize() uint32 {
+// GetWriteChunkSize returns the current outgoing chunk size.
+func (s *Session) GetWriteChunkSize() uint32 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.chunkSize
+	return s.writeChunkSize
 }
 
 // SetApp sets the application name.

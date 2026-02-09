@@ -28,6 +28,7 @@ type MediaMessage struct {
 	Type      MessageType // Type of media (audio, video, metadata)
 	Timestamp uint32      // Media timestamp in timebase units
 	Payload   []byte      // Media payload (owned by message, returned to pool on release)
+	IsInit    bool        // True for codec init data (AVC/AAC sequence headers) that late joiners need
 }
 
 // messagePool is a sync.Pool for MediaMessage instances.
@@ -46,6 +47,7 @@ func AcquireMessage() *MediaMessage {
 	msg.Type = 0
 	msg.Timestamp = 0
 	msg.Payload = nil
+	msg.IsInit = false
 	return msg
 }
 
@@ -102,14 +104,17 @@ func (m *MediaMessage) SetPayload(data []byte) {
 	m.Payload = append(buf, data...)
 }
 
-// Clone creates a deep copy of the message with a new pooled payload.
-// Both the original and clone must be released independently.
+// Clone creates a deep copy of the message with a new payload (not pooled, for long-lived cache).
+// The clone owns its own payload and must be released independently.
 func (m *MediaMessage) Clone() *MediaMessage {
-	clone := AcquireMessage()
-	clone.Type = m.Type
-	clone.Timestamp = m.Timestamp
+	clone := &MediaMessage{
+		Type:      m.Type,
+		Timestamp: m.Timestamp,
+		IsInit:    m.IsInit,
+	}
 	if len(m.Payload) > 0 {
-		clone.SetPayload(m.Payload)
+		clone.Payload = make([]byte, len(m.Payload))
+		copy(clone.Payload, m.Payload)
 	}
 	return clone
 }

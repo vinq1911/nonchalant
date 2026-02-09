@@ -9,7 +9,8 @@ import (
 
 // Stream represents a live media stream instance.
 // It manages one publisher and multiple subscribers with efficient message fanout.
-// Lock expectations: Uses mutex for publisher/subscriber management.
+// Init messages (AVC/AAC sequence headers) are cached and replayed to late-joining subscribers.
+// Lock expectations: Uses mutex for publisher/subscriber management and init cache.
 // Allocation: Pre-allocated subscriber map, no per-message allocations in fanout.
 type Stream struct {
 	key         StreamKey
@@ -17,6 +18,9 @@ type Stream struct {
 	publisher   *Publisher
 	subscribers map[uint64]*Subscriber
 	nextSubID   uint64
+	initVideo   *MediaMessage // Cached AVC sequence header (cloned, long-lived)
+	initAudio   *MediaMessage // Cached AAC sequence header (cloned, long-lived)
+	initMeta    *MediaMessage // Cached metadata/onMetaData (cloned, long-lived)
 }
 
 // Publisher represents a stream publisher.
@@ -54,10 +58,14 @@ func (s *Stream) AttachPublisher(id uint64) bool {
 }
 
 // DetachPublisher detaches the current publisher from the stream.
+// Also clears cached init messages since they belong to the publisher's session.
 func (s *Stream) DetachPublisher() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.publisher = nil
+	s.initVideo = nil
+	s.initAudio = nil
+	s.initMeta = nil
 }
 
 // HasPublisher returns true if a publisher is currently attached.
@@ -68,6 +76,8 @@ func (s *Stream) HasPublisher() bool {
 }
 
 // AttachSubscriber attaches a new subscriber to the stream.
+// Cached init messages (sequence headers) are replayed into the subscriber's buffer
+// so late-joining clients receive codec configuration before live frames.
 // Returns the subscriber and a unique subscriber ID.
 func (s *Stream) AttachSubscriber(capacity uint32, strategy BackpressureStrategy) (*Subscriber, uint64) {
 	s.mu.Lock()
@@ -77,6 +87,18 @@ func (s *Stream) AttachSubscriber(capacity uint32, strategy BackpressureStrategy
 	s.nextSubID++
 
 	sub := NewSubscriber(id, capacity, strategy)
+
+	// Replay cached init messages so subscriber gets codec configuration first
+	if s.initMeta != nil {
+		sub.Buffer().Write(s.initMeta)
+	}
+	if s.initVideo != nil {
+		sub.Buffer().Write(s.initVideo)
+	}
+	if s.initAudio != nil {
+		sub.Buffer().Write(s.initAudio)
+	}
+
 	s.subscribers[id] = sub
 	return sub, id
 }
@@ -89,12 +111,19 @@ func (s *Stream) DetachSubscriber(id uint64) {
 }
 
 // Publish delivers a message to all subscribers.
+// Init messages (IsInit=true) are also cached so late-joining subscribers receive them.
 // This is the hot path - must be allocation-free in steady state.
-// Lock expectations: Read lock held during fanout (non-blocking for subscribers).
-// Allocation: No allocations - only writes to pre-allocated ring buffers.
+// Lock expectations: Read lock for fanout, write lock only for init message caching.
+// Allocation: No allocations in steady state. Clone only for init messages (rare).
 func (s *Stream) Publish(msg *MediaMessage) {
 	if msg == nil {
 		return
+	}
+
+	// Cache init messages (sequence headers) for late-joining subscribers.
+	// NOTE: This allocates a clone, but only happens once per stream setup (not per frame).
+	if msg.IsInit {
+		s.cacheInitMessage(msg)
 	}
 
 	s.mu.RLock()
@@ -111,6 +140,22 @@ func (s *Stream) Publish(msg *MediaMessage) {
 	for _, sub := range subs {
 		// Write to subscriber's buffer (non-blocking)
 		sub.Buffer().Write(msg)
+	}
+}
+
+// cacheInitMessage stores a clone of an init message for late-joining subscribers.
+// Only called for messages with IsInit=true (codec sequence headers).
+func (s *Stream) cacheInitMessage(msg *MediaMessage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch msg.Type {
+	case MessageTypeVideo:
+		s.initVideo = msg.Clone()
+	case MessageTypeAudio:
+		s.initAudio = msg.Clone()
+	case MessageTypeMetadata:
+		s.initMeta = msg.Clone()
 	}
 }
 

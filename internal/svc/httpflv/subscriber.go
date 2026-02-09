@@ -6,6 +6,8 @@ package httpflv
 import (
 	"bufio"
 	"io"
+	"runtime"
+
 	"nonchalant/internal/core/bus"
 	"nonchalant/internal/core/protocol/flv"
 )
@@ -18,6 +20,9 @@ type Subscriber struct {
 	stream        *bus.Stream
 	subscriberID  uint64
 	headerWritten bool
+	gotKeyframe   bool   // True after first video keyframe received
+	tsOffset      uint32 // First non-init timestamp, subtracted from all subsequent
+	tsBaseSet     bool   // True after tsOffset is captured
 }
 
 // NewSubscriber creates a new HTTP-FLV subscriber.
@@ -56,6 +61,10 @@ func (s *Subscriber) WriteHeader(hasAudio, hasVideo bool) error {
 
 // ProcessMessages processes messages from the subscriber buffer and writes FLV tags.
 // This runs in a loop until the connection is closed or an error occurs.
+// ALL non-init frames are dropped until the first video keyframe arrives, so that
+// audio and video start simultaneously and the decoder can initialize properly.
+// Timestamps are rebased so the subscriber's stream starts at ts=0, preventing
+// players from buffering a multi-second gap between init (ts=0) and live data.
 // Allocation: Tag creation allocates header, but payloads are reused from bus.
 // NOTE: This blocks until client disconnects. HTTP connection close detection
 // happens at the write/flush level.
@@ -65,35 +74,58 @@ func (s *Subscriber) ProcessMessages() error {
 	}
 
 	for {
-		// Read message from subscriber buffer
 		msg, ok := s.busSubscriber.Buffer().Read()
 		if !ok {
-			// Buffer empty, continue waiting
-			// NOTE: In a production system, we might want to add a timeout
-			// or context cancellation here
+			// Buffer empty — yield to avoid busy-wait CPU burn
+			runtime.Gosched()
 			continue
+		}
+
+		// Keyframe gating: drop ALL non-init frames until first video keyframe.
+		// This prevents audio from piling up before video, which causes player
+		// buffer deadlocks. Init messages (codec config) always pass through.
+		if !s.gotKeyframe && !msg.IsInit {
+			if msg.Type == bus.MessageTypeVideo && flv.IsVideoKeyframe(msg.Payload) {
+				s.gotKeyframe = true
+			} else {
+				continue // Drop all non-init frames before first keyframe
+			}
 		}
 
 		// Convert to FLV tag
 		tag := flv.MuxMessage(msg)
 		if tag == nil {
-			// Unsupported message type, skip
 			continue
 		}
 
-		// Write tag
-		tagBytes := tag.Bytes()
-		if _, err := s.writer.Write(tagBytes); err != nil {
-			// Client disconnected or write error
+		// Rebase timestamp so stream starts at ts=0 for this subscriber
+		tag.Timestamp = s.rebaseTimestamp(msg)
+
+		// Write tag and flush to detect disconnects early
+		if _, err := s.writer.Write(tag.Bytes()); err != nil {
 			return err
 		}
-
-		// Flush to detect disconnects early
 		if err := s.writer.Flush(); err != nil {
-			// Client disconnected
 			return err
 		}
 	}
+}
+
+// rebaseTimestamp adjusts a message timestamp so the subscriber's stream starts at ts=0.
+// Init messages always return ts=0. The first non-init timestamp becomes the offset
+// that is subtracted from all subsequent timestamps.
+func (s *Subscriber) rebaseTimestamp(msg *bus.MediaMessage) uint32 {
+	if msg.IsInit {
+		return 0
+	}
+	if !s.tsBaseSet {
+		s.tsOffset = msg.Timestamp
+		s.tsBaseSet = true
+	}
+	if msg.Timestamp < s.tsOffset {
+		return 0 // Guard against underflow
+	}
+	return msg.Timestamp - s.tsOffset
 }
 
 // Attach attaches the subscriber to the stream.

@@ -15,68 +15,40 @@ type Tag struct {
 }
 
 // Bytes encodes the tag as FLV tag bytes.
-// Format: tag type (1) + data size (3) + timestamp (3) + timestamp extended (1) + stream ID (3) + data (N) + previous tag size (4)
-// Allocation: Creates new slice for tag header, reuses data slice.
+// Format: tag type (1) + data size (3) + timestamp lower (3) + timestamp upper (1) + stream ID (3) + data (N) + previous tag size (4)
+// Allocation: Creates new slice for complete tag, reuses data slice.
 func (t *Tag) Bytes() []byte {
 	dataSize := uint32(len(t.Data))
 
-	// Tag header: 11 bytes
-	header := make([]byte, 11)
-	header[0] = t.Type
+	// Total: 11-byte header + data + 4-byte previous tag size
+	totalSize := 11 + len(t.Data) + 4
+	result := make([]byte, totalSize)
+
+	// Tag type (1 byte)
+	result[0] = t.Type
 
 	// Data size (3 bytes, big-endian)
-	header[1] = byte(dataSize >> 16)
-	header[2] = byte(dataSize >> 8)
-	header[3] = byte(dataSize)
+	result[1] = byte(dataSize >> 16)
+	result[2] = byte(dataSize >> 8)
+	result[3] = byte(dataSize)
 
-	// Timestamp (3 bytes) + extended (1 byte)
-	timestamp := t.Timestamp
-	if timestamp >= 0xFFFFFF {
-		header[4] = 0xFF
-		header[5] = 0xFF
-		header[6] = 0xFF
-		header[7] = 1 // Extended timestamp flag
-		// Extended timestamp will be written after header
-	} else {
-		header[4] = byte(timestamp >> 16)
-		header[5] = byte(timestamp >> 8)
-		header[6] = byte(timestamp)
-		header[7] = 0 // No extended timestamp
-	}
+	// Timestamp: lower 24 bits in bytes 4-6, upper 8 bits in byte 7 (per FLV spec)
+	result[4] = byte(t.Timestamp >> 16)
+	result[5] = byte(t.Timestamp >> 8)
+	result[6] = byte(t.Timestamp)
+	result[7] = byte(t.Timestamp >> 24) // TimestampExtended
 
 	// Stream ID (3 bytes, always 0)
-	header[8] = 0
-	header[9] = 0
-	header[10] = 0
-
-	// Calculate total tag size (header + data + previous tag size)
-	tagSize := 11 + len(t.Data)
-	if timestamp >= 0xFFFFFF {
-		tagSize += 4 // Extended timestamp
-	}
-	tagSize += 4 // Previous tag size
-
-	// Build complete tag
-	result := make([]byte, tagSize)
-	copy(result, header)
-	offset := 11
-
-	// Extended timestamp if needed
-	if timestamp >= 0xFFFFFF {
-		binary.BigEndian.PutUint32(result[offset:offset+4], timestamp)
-		offset += 4
-	}
+	result[8] = 0
+	result[9] = 0
+	result[10] = 0
 
 	// Data
-	copy(result[offset:], t.Data)
-	offset += len(t.Data)
+	copy(result[11:], t.Data)
 
-	// Previous tag size (4 bytes, big-endian)
+	// Previous tag size (4 bytes, big-endian) = 11 + data size
 	prevSize := uint32(11 + len(t.Data))
-	if timestamp >= 0xFFFFFF {
-		prevSize += 4
-	}
-	binary.BigEndian.PutUint32(result[offset:offset+4], prevSize)
+	binary.BigEndian.PutUint32(result[11+len(t.Data):], prevSize)
 
 	return result
 }

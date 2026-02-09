@@ -1,5 +1,8 @@
 // If you are AI: This file implements a lock-free ring buffer for subscriber message delivery.
 // The ring buffer provides bounded buffering with configurable backpressure behavior.
+// CRITICAL: Both writePos and readPos increment freely (never masked). Only use the mask
+// when indexing into the buffer array. The emptiness check readPos==writePos relies on
+// both counters using the same domain.
 
 package bus
 
@@ -24,14 +27,15 @@ const (
 type RingBuffer struct {
 	buffer   []*MediaMessage // Pre-allocated message slots
 	size     uint32          // Buffer size (power of 2 for efficient modulo)
-	writePos uint32          // Write position (atomic)
-	readPos  uint32          // Read position (atomic)
+	mask     uint32          // size - 1, for efficient modulo (index = pos & mask)
+	writePos uint32          // Write position (atomic, free-running)
+	readPos  uint32          // Read position (atomic, free-running)
 	strategy BackpressureStrategy
 	dropped  uint64 // Counter for dropped messages (atomic)
 }
 
 // NewRingBuffer creates a new ring buffer with the specified capacity.
-// Capacity must be a power of 2 for efficient modulo operations.
+// Capacity is rounded up to a power of 2 for efficient modulo via bitmask.
 func NewRingBuffer(capacity uint32, strategy BackpressureStrategy) *RingBuffer {
 	// Round up to next power of 2
 	actualSize := uint32(1)
@@ -42,14 +46,15 @@ func NewRingBuffer(capacity uint32, strategy BackpressureStrategy) *RingBuffer {
 	return &RingBuffer{
 		buffer:   make([]*MediaMessage, actualSize),
 		size:     actualSize,
+		mask:     actualSize - 1,
 		strategy: strategy,
 	}
 }
 
 // Write attempts to write a message to the buffer.
-// Returns true if written, false if buffer was full and message was dropped.
+// Returns true if written, false if buffer was full and message was dropped (DropNewest).
 // Lock expectations: Single writer (publisher goroutine).
-// NOTE: We reserve one slot to distinguish full from empty.
+// Both writePos and readPos are free-running; only masked when indexing the buffer array.
 func (rb *RingBuffer) Write(msg *MediaMessage) bool {
 	if msg == nil {
 		return false
@@ -58,13 +63,9 @@ func (rb *RingBuffer) Write(msg *MediaMessage) bool {
 	writePos := atomic.LoadUint32(&rb.writePos)
 	readPos := atomic.LoadUint32(&rb.readPos)
 
-	// Calculate next write position
-	mask := rb.size - 1
-	nextWritePos := (writePos + 1) & mask
-
-	// Check if buffer is full (next write position equals read position)
-	if nextWritePos == (readPos & mask) {
-		// Buffer full - apply backpressure strategy
+	// Buffer full when used count equals capacity.
+	// Unsigned subtraction works correctly even after uint32 wrap.
+	if writePos-readPos >= rb.size {
 		atomic.AddUint64(&rb.dropped, 1)
 		if rb.strategy == BackpressureDropOldest {
 			// Advance read position to drop oldest
@@ -75,9 +76,9 @@ func (rb *RingBuffer) Write(msg *MediaMessage) bool {
 		}
 	}
 
-	// Write message at current write position
-	rb.buffer[writePos&mask] = msg
-	atomic.StoreUint32(&rb.writePos, nextWritePos)
+	// Write message at current write position (masked for array index)
+	rb.buffer[writePos&rb.mask] = msg
+	atomic.StoreUint32(&rb.writePos, writePos+1)
 	return true
 }
 
@@ -93,7 +94,7 @@ func (rb *RingBuffer) Read() (*MediaMessage, bool) {
 		return nil, false
 	}
 
-	msg := rb.buffer[readPos&(rb.size-1)]
+	msg := rb.buffer[readPos&rb.mask]
 	atomic.AddUint32(&rb.readPos, 1)
 	return msg, true
 }
@@ -103,25 +104,10 @@ func (rb *RingBuffer) Dropped() uint64 {
 	return atomic.LoadUint64(&rb.dropped)
 }
 
-// Available returns the number of available slots in the buffer.
-// NOTE: One slot is reserved to distinguish full from empty.
+// Available returns the number of free slots in the buffer.
 func (rb *RingBuffer) Available() uint32 {
 	writePos := atomic.LoadUint32(&rb.writePos)
 	readPos := atomic.LoadUint32(&rb.readPos)
-	mask := rb.size - 1
-	nextWritePos := (writePos + 1) & mask
-	nextReadPos := readPos & mask
-
-	if nextWritePos == nextReadPos {
-		return 0 // Full
-	}
-
-	// Calculate used slots
-	if nextWritePos > nextReadPos {
-		used := nextWritePos - nextReadPos
-		return rb.size - 1 - used // -1 for reserved slot
-	} else {
-		used := (rb.size - nextReadPos) + nextWritePos
-		return rb.size - 1 - used // -1 for reserved slot
-	}
+	used := writePos - readPos // unsigned subtraction handles wrap
+	return rb.size - used
 }

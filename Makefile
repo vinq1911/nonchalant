@@ -1,6 +1,6 @@
 # If you are AI: This Makefile provides all build, test, and deployment targets for nonchalant.
 
-.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video test-send test-receive test-send-receive-ws test-roundtrip
+.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video test-video-loop test-send test-receive test-send-receive-ws test-roundtrip
 
 # Configuration variables
 CONFIG ?= configs/nonchalant.example.yaml
@@ -36,6 +36,7 @@ help:
 	@echo "  check-comments     - Check file headers and function comments"
 	@echo "  check              - Run all checks"
 	@echo "  test-video         - Test send/receive with video file (full round-trip)"
+	@echo "  test-video-loop    - Full round-trip loop (runs until Ctrl+C)"
 	@echo "  test-send         - Test SEND only (RTMP publish)"
 	@echo "  test-receive       - Test RECEIVE only (HTTP-FLV playback)"
 	@echo "  test-roundtrip    - Complete round-trip: send → verify → receive"
@@ -245,6 +246,69 @@ test-video: build
 	kill $$SERVER_PID 2>/dev/null || true; \
 	wait $$SERVER_PID 2>/dev/null || true; \
 	echo "=== Test complete ==="
+
+# Full round-trip loop: publish in a loop + receive via HTTP-FLV. Runs until Ctrl+C.
+test-video-loop: build
+	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
+		echo "Error: assets/nonchalant-test.mp4 not found"; \
+		exit 1; \
+	fi
+	@echo "=== Full Round-Trip Loop (Ctrl+C to stop) ==="; \
+	echo "1. Starting server..."; \
+	./bin/nonchalant --config $(CONFIG) > /tmp/nonchalant-loop.log 2>&1 & \
+	SERVER_PID=$$!; \
+	CLEANED=0; \
+	cleanup() { \
+		[ $$CLEANED -eq 1 ] && return; \
+		CLEANED=1; \
+		echo ""; \
+		echo "Stopping..."; \
+		kill $$RECV_PID 2>/dev/null || true; \
+		kill $$PUB_PID 2>/dev/null || true; \
+		kill $$SERVER_PID 2>/dev/null || true; \
+		wait $$SERVER_PID 2>/dev/null || true; \
+		echo "Server log: /tmp/nonchalant-loop.log"; \
+		echo "=== Stopped ==="; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	sleep 2; \
+	if ! kill -0 $$SERVER_PID 2>/dev/null; then \
+		echo "Server failed to start. Check /tmp/nonchalant-loop.log"; \
+		cat /tmp/nonchalant-loop.log; \
+		exit 1; \
+	fi; \
+	echo "2. Publishing test video in loop via RTMP..."; \
+	ffmpeg -stream_loop -1 -re -i assets/nonchalant-test.mp4 \
+		-c copy -f flv \
+		rtmp://localhost:$(RTMP_PORT)/live/looptest \
+		> /tmp/ffmpeg-loop-publish.log 2>&1 & \
+	PUB_PID=$$!; \
+	sleep 3; \
+	echo "3. Receiving stream via HTTP-FLV (saving to /tmp/loop-receive.flv)..."; \
+	touch /tmp/loop-receive.flv; \
+	curl -s http://localhost:$(HTTP_PORT)/live/looptest.flv \
+		-o /tmp/loop-receive.flv & \
+	RECV_PID=$$!; \
+	echo ""; \
+	echo "  Publish:  rtmp://localhost:$(RTMP_PORT)/live/looptest"; \
+	echo "  Playback: http://localhost:$(HTTP_PORT)/live/looptest.flv"; \
+	echo "  API:      http://localhost:$(HTTP_PORT)/api/streams"; \
+	echo "  Server log: /tmp/nonchalant-loop.log"; \
+	echo ""; \
+	echo "Streaming... press Ctrl+C to stop."; \
+	echo ""; \
+	while kill -0 $$PUB_PID 2>/dev/null && kill -0 $$SERVER_PID 2>/dev/null; do \
+		BYTES=$$(wc -c < /tmp/loop-receive.flv 2>/dev/null || echo 0); \
+		STREAMS=$$(curl -sf http://localhost:$(HTTP_PORT)/api/streams 2>/dev/null | \
+			python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('streams',[])))" 2>/dev/null || echo "?"); \
+		printf "\r  [running] streams=%-3s received=%s bytes  " "$$STREAMS" "$$BYTES"; \
+		sleep 5; \
+	done; \
+	echo ""; \
+	if [ $$CLEANED -eq 0 ]; then \
+		if ! kill -0 $$SERVER_PID 2>/dev/null; then echo "Server exited unexpectedly. Check /tmp/nonchalant-loop.log"; fi; \
+		if ! kill -0 $$PUB_PID 2>/dev/null; then echo "Publisher exited unexpectedly. Check /tmp/ffmpeg-loop-publish.log"; fi; \
+	fi
 
 # Test send only (RTMP publish)
 test-send: build

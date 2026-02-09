@@ -31,8 +31,9 @@ func (h *Header) Bytes() []byte {
 	header[4] = flags
 
 	// Data offset (4 bytes, big-endian)
-	// Points to start of first tag (after header + previous tag size)
-	offset := uint32(FLVHeaderSize + 4) // header + previous tag size
+	// Per FLV spec: "The length of this header in bytes" = 9.
+	// The body (PreviousTagSize0 + tags) starts immediately after.
+	offset := uint32(FLVHeaderSize)
 	header[5] = byte(offset >> 24)
 	header[6] = byte(offset >> 16)
 	header[7] = byte(offset >> 8)
