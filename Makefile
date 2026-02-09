@@ -83,9 +83,12 @@ docker-stop:
 	-docker stop $(CONTAINER)
 	-docker rm $(CONTAINER)
 
-# Kill running process (works on macOS and Linux)
+# Kill running process and free ports (works on macOS and Linux)
 kill:
-	@pkill -f nonchalant || true
+	@pkill -x nonchalant 2>/dev/null || true
+	@fuser -k $(RTMP_PORT)/tcp 2>/dev/null || true
+	@fuser -k $(HTTP_PORT)/tcp 2>/dev/null || true
+	@sleep 0.5
 
 # Format code
 fmt:
@@ -248,7 +251,7 @@ test-video: build
 	echo "=== Test complete ==="
 
 # Full round-trip loop: publish in a loop + receive via HTTP-FLV. Runs until Ctrl+C.
-test-video-loop: build
+test-video-loop: kill build
 	@if [ ! -f assets/nonchalant-test.mp4 ]; then \
 		echo "Error: assets/nonchalant-test.mp4 not found"; \
 		exit 1; \
