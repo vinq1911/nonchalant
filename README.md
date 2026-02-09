@@ -19,7 +19,8 @@ This server currently provides:
 - **WebSocket-FLV output** - Stream live media via WebSocket-FLV (`ws://host/ws/{app}/{name}`)
 - **RTMP relay** - Pull remote streams or push local streams to remote servers
 - **HTTP API** - Introspection and control endpoints (`/api/server`, `/api/streams`, `/api/relay`)
-- **FFmpeg integration** - Optional transcoding and packaging (build with `-tags ffmpeg`)
+- **HLS / DASH** - Streams are HLS/DASH-ready via external `ffmpeg` packaging
+- **FFmpeg integration** - Optional native transcoding and packaging (build with `-tags ffmpeg`)
 - Core stream bus with efficient fanout
 - Integration tests
 - Documentation generation
@@ -113,6 +114,24 @@ ws.onmessage = (event) => {
 ```
 
 Or use any WebSocket-FLV compatible player with the URL: `ws://host:port/ws/{app}/{name}`
+
+### HLS / DASH Packaging
+
+nonchalant outputs standards-compliant FLV streams that can be packaged into HLS or DASH using `ffmpeg`:
+
+**HLS:**
+```bash
+ffmpeg -i http://localhost:8081/live/mystream.flv \
+  -c copy -f hls -hls_time 4 -hls_list_size 5 /tmp/hls/stream.m3u8
+```
+
+**DASH:**
+```bash
+ffmpeg -i http://localhost:8081/live/mystream.flv \
+  -c copy -f dash -window_size 5 /tmp/dash/stream.mpd
+```
+
+Native HLS/DASH output (via cgo FFmpeg integration) is planned — see Phase 8 in the implementation plan.
 
 ### API Endpoints
 
