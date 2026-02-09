@@ -1,8 +1,3 @@
-<!--
-If you are AI: This is the main README for the nonchalant repository.
-It provides an overview and quick start instructions.
--->
-
 <div align="center">
   <img src="assets/nonchalant-logo.png" alt="nonchalant logo" width="400">
 </div>
@@ -145,16 +140,6 @@ curl -X POST http://localhost:8081/api/relay/restart \
 - [Configuration](docs/CONFIG.md) - Configuration schema
 - [Usage Guide](docs/USAGE.md) - Step-by-step feature usage
 - [Testing](docs/TESTING.md) - How to run tests
-
-## Development
-
-This project follows strict discipline:
-- Files must not exceed 300 lines
-- All files must have AI headers
-- All functions must have comments
-- `make check` must pass at all times
-
-See `.cursor/rules.md` for complete engineering contract.
 
 ## License
 
