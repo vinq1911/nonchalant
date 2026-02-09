@@ -66,7 +66,10 @@ func (p *Publisher) PublishVideo(timestamp uint32, payload []byte) {
 
 // PublishMetadata publishes a metadata message to the stream.
 // Metadata (@setDataFrame / onMetaData) is always treated as init data.
+// The RTMP @setDataFrame prefix is stripped so the FLV script tag starts with "onMetaData".
 func (p *Publisher) PublishMetadata(timestamp uint32, payload []byte) {
+	payload = stripSetDataFrame(payload)
+
 	msg := bus.AcquireMessage()
 	msg.Type = bus.MessageTypeMetadata
 	msg.Timestamp = timestamp
@@ -76,6 +79,30 @@ func (p *Publisher) PublishMetadata(timestamp uint32, payload []byte) {
 	msg.Payload = append(buf, payload...)
 
 	p.stream.Publish(msg)
+}
+
+// stripSetDataFrame removes the RTMP-specific "@setDataFrame" AMF0 string prefix.
+// RTMP data messages contain: "@setDataFrame" + "onMetaData" + metadata_object.
+// FLV script tags expect:                      "onMetaData" + metadata_object.
+// AMF0 string wire format: 0x02 (type) + uint16 length + string bytes.
+func stripSetDataFrame(payload []byte) []byte {
+	const prefix = "@setDataFrame"
+	// Minimum: 1 (type marker) + 2 (length) + len(prefix) = 16 bytes
+	if len(payload) < 3 {
+		return payload
+	}
+	if payload[0] != 0x02 { // AMF0 string type marker
+		return payload
+	}
+	strLen := int(payload[1])<<8 | int(payload[2])
+	total := 3 + strLen // type(1) + length(2) + string data
+	if len(payload) < total {
+		return payload
+	}
+	if string(payload[3:3+strLen]) == prefix {
+		return payload[total:]
+	}
+	return payload
 }
 
 // isAVCSequenceHeader detects an AVC (H.264) decoder configuration record.
