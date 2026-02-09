@@ -6,6 +6,7 @@ package httpflv
 import (
 	"bufio"
 	"io"
+	"net/http"
 	"runtime"
 
 	"nonchalant/internal/core/bus"
@@ -16,6 +17,7 @@ import (
 // Reads messages from bus and writes FLV tags to HTTP response.
 type Subscriber struct {
 	writer        *bufio.Writer
+	flusher       http.Flusher // HTTP flusher for pushing data to the network
 	busSubscriber *bus.Subscriber
 	stream        *bus.Stream
 	subscriberID  uint64
@@ -26,10 +28,14 @@ type Subscriber struct {
 }
 
 // NewSubscriber creates a new HTTP-FLV subscriber.
+// The writer should be an http.ResponseWriter for HTTP streaming.
+// If it implements http.Flusher, data is pushed to the client immediately.
 func NewSubscriber(w io.Writer, stream *bus.Stream) *Subscriber {
+	flusher, _ := w.(http.Flusher)
 	return &Subscriber{
-		writer: bufio.NewWriter(w),
-		stream: stream,
+		writer:  bufio.NewWriter(w),
+		flusher: flusher,
+		stream:  stream,
 	}
 }
 
@@ -54,6 +60,7 @@ func (s *Subscriber) WriteHeader(hasAudio, hasVideo bool) error {
 	if err := s.writer.Flush(); err != nil {
 		return err
 	}
+	s.httpFlush()
 
 	s.headerWritten = true
 	return nil
@@ -108,6 +115,16 @@ func (s *Subscriber) ProcessMessages() error {
 		if err := s.writer.Flush(); err != nil {
 			return err
 		}
+		s.httpFlush()
+	}
+}
+
+// httpFlush pushes buffered data to the HTTP client.
+// Without this, Go's net/http may buffer the response until the handler returns,
+// preventing streaming. No-op if the underlying writer is not an http.Flusher.
+func (s *Subscriber) httpFlush() {
+	if s.flusher != nil {
+		s.flusher.Flush()
 	}
 }
 

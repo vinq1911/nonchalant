@@ -5,7 +5,6 @@ package itest
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,20 +21,16 @@ func TestServerStartupAndShutdown(t *testing.T) {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
 
-	// Find a free port
-	listener, err := net.Listen("tcp", ":0")
-	if err != nil {
-		t.Fatalf("Failed to find free port: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	// Find free ports for HTTP and RTMP
+	port := findFreePort(t)
+	rtmpPort := findFreePort(t)
 
 	// Create a temporary config file
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	configContent := `server:
   health_port: 8080
   http_port: ` + fmt.Sprintf("%d", port) + `
-  rtmp_port: 1935
+  rtmp_port: ` + fmt.Sprintf("%d", rtmpPort) + `
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)

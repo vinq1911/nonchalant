@@ -26,13 +26,14 @@ func TestAPIServer(t *testing.T) {
 
 	// Find free ports
 	httpPort := findFreePort(t)
+	rtmpPort := findFreePort(t)
 
 	// Create a temporary config file
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	configContent := `server:
   health_port: 8080
   http_port: ` + portToString(httpPort) + `
-  rtmp_port: 1935
+  rtmp_port: ` + portToString(rtmpPort) + `
 `
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
