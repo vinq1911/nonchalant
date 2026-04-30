@@ -134,7 +134,7 @@ func TestPublishFanout(t *testing.T) {
 	stream.Publish(msg)
 
 	// Both subscribers should receive the message
-	read1, ok1 := sub1.Buffer().Read()
+	read1, ok1 := sub1.Read()
 	if !ok1 {
 		t.Error("Subscriber 1 should receive message")
 	}
@@ -142,7 +142,7 @@ func TestPublishFanout(t *testing.T) {
 		t.Error("Message type mismatch for subscriber 1")
 	}
 
-	read2, ok2 := sub2.Buffer().Read()
+	read2, ok2 := sub2.Read()
 	if !ok2 {
 		t.Error("Subscriber 2 should receive message")
 	}

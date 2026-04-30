@@ -59,7 +59,7 @@ func (t *Task) process() {
 		}
 
 		// Read message from subscriber buffer
-		msg, ok := t.subscriber.Buffer().Read()
+		msg, ok := t.subscriber.Read()
 		if !ok {
 			// Buffer empty, continue waiting
 			continue
@@ -82,7 +82,7 @@ func (t *Task) Stop() error {
 		t.stream.DetachSubscriber(t.subscriberID)
 	}
 	if t.pipeline != nil {
-		t.pipeline.Close()
+		_ = t.pipeline.Close()
 	}
 	return nil
 }

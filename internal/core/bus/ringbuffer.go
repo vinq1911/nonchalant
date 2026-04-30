@@ -22,14 +22,17 @@ const (
 
 // RingBuffer is a bounded circular buffer for MediaMessage delivery.
 // It is lock-free for single producer, single consumer scenarios.
-// NOTE: This implementation uses atomic operations for thread-safety.
+// NOTE: This implementation uses atomic operations for thread-safety. Each
+// slot is an atomic.Pointer so Write and Read can safely run on different
+// goroutines without the race detector flagging the slot store / load —
+// even though the index ordering already provides the happens-before edge.
 // Allocation: Pre-allocated buffer, no per-message allocations.
 type RingBuffer struct {
-	buffer   []*MediaMessage // Pre-allocated message slots
-	size     uint32          // Buffer size (power of 2 for efficient modulo)
-	mask     uint32          // size - 1, for efficient modulo (index = pos & mask)
-	writePos uint32          // Write position (atomic, free-running)
-	readPos  uint32          // Read position (atomic, free-running)
+	buffer   []atomic.Pointer[MediaMessage] // Pre-allocated message slots
+	size     uint32                         // Buffer size (power of 2 for efficient modulo)
+	mask     uint32                         // size - 1, for efficient modulo (index = pos & mask)
+	writePos uint32                         // Write position (atomic, free-running)
+	readPos  uint32                         // Read position (atomic, free-running)
 	strategy BackpressureStrategy
 	dropped  uint64 // Counter for dropped messages (atomic)
 }
@@ -44,7 +47,7 @@ func NewRingBuffer(capacity uint32, strategy BackpressureStrategy) *RingBuffer {
 	}
 
 	return &RingBuffer{
-		buffer:   make([]*MediaMessage, actualSize),
+		buffer:   make([]atomic.Pointer[MediaMessage], actualSize),
 		size:     actualSize,
 		mask:     actualSize - 1,
 		strategy: strategy,
@@ -76,8 +79,10 @@ func (rb *RingBuffer) Write(msg *MediaMessage) bool {
 		}
 	}
 
-	// Write message at current write position (masked for array index)
-	rb.buffer[writePos&rb.mask] = msg
+	// Write message at current write position (masked for array index).
+	// Atomic Store on the slot — combined with the writePos store below — gives
+	// the consumer a release/acquire pair so the slot's contents are visible.
+	rb.buffer[writePos&rb.mask].Store(msg)
 	atomic.StoreUint32(&rb.writePos, writePos+1)
 	return true
 }
@@ -94,7 +99,7 @@ func (rb *RingBuffer) Read() (*MediaMessage, bool) {
 		return nil, false
 	}
 
-	msg := rb.buffer[readPos&rb.mask]
+	msg := rb.buffer[readPos&rb.mask].Load()
 	atomic.AddUint32(&rb.readPos, 1)
 	return msg, true
 }

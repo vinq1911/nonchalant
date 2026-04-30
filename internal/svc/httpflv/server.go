@@ -6,22 +6,32 @@ package httpflv
 import (
 	"net/http"
 
+	"nonchalant/internal/auth"
 	"nonchalant/internal/core/bus"
 )
 
 // Service provides HTTP-FLV streaming functionality.
 type Service struct {
-	handler *Handler
+	handler  *Handler
+	playKeys *auth.KeySet
 }
 
 // NewService creates a new HTTP-FLV service.
-func NewService(registry *bus.Registry) *Service {
+// playKeys may be nil to allow anonymous playback.
+func NewService(registry *bus.Registry, playKeys *auth.KeySet) *Service {
 	return &Service{
-		handler: NewHandler(registry),
+		handler:  NewHandler(registry),
+		playKeys: playKeys,
 	}
 }
 
 // RegisterRoutes registers HTTP-FLV routes on the provided mux.
+// When play keys are configured, the catch-all is gated by auth.Gate.
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
-	s.handler.RegisterRoutes(mux)
+	if s.playKeys == nil {
+		s.handler.RegisterRoutes(mux)
+		return
+	}
+	// Re-register the same dispatch logic, but wrapped in the gate.
+	mux.Handle("/", auth.Gate(s.playKeys, http.HandlerFunc(s.handler.serveDispatched)))
 }

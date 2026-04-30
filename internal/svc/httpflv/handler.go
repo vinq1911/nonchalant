@@ -4,12 +4,35 @@
 package httpflv
 
 import (
+	"context"
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"nonchalant/internal/core/bus"
 )
+
+// waitForStreams polls the stream's cached init data and returns the
+// (hasAudio, hasVideo) flags suitable for the FLV header. It returns
+// when both flags are true, when ctx ends, or when timeout elapses —
+// whichever comes first. If a publisher only ever produces video, this
+// drops out at timeout with hasAudio=false.
+func waitForStreams(ctx context.Context, stream *bus.Stream, timeout time.Duration) (bool, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		hasAudio := stream.HasAudioInit()
+		hasVideo := stream.HasVideoInit()
+		if (hasAudio && hasVideo) || time.Now().After(deadline) {
+			return hasAudio, hasVideo
+		}
+		select {
+		case <-ctx.Done():
+			return hasAudio, hasVideo
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
 
 // Handler handles HTTP-FLV requests.
 type Handler struct {
@@ -65,47 +88,68 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set response headers BEFORE writing body — Go sends headers on first Write
-	// NOTE: Do not set Transfer-Encoding — Go net/http handles chunked encoding automatically.
-	w.Header().Set("Content-Type", "video/x-flv")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	// Hijack the connection so we can write raw FLV bytes directly to the
+	// TCP socket. This bypasses Go's HTTP chunked-transfer encoding and the
+	// double-flush (bufio + http.ResponseWriter.Flush) that pprof showed
+	// dominating CPU at high fan-out — each FLV tag becomes exactly one
+	// syscall.write instead of two.
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "stream hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, "hijack failed", http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close()
 
-	// Create subscriber
-	sub := NewSubscriber(w, stream)
+	// Send a minimal HTTP/1.1 response. NOTE: no Transfer-Encoding — without
+	// it the response is "until close", which is what we want for live FLV.
+	// We're now responsible for the connection's lifetime.
+	headers := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: video/x-flv\r\n" +
+		"Cache-Control: no-cache\r\n" +
+		"Connection: close\r\n" +
+		"Access-Control-Allow-Origin: *\r\n" +
+		"\r\n"
+	if _, err := conn.Write([]byte(headers)); err != nil {
+		return
+	}
+
+	sub := NewSubscriber(conn, stream)
 	defer sub.Detach()
-
-	// Attach to stream (replays cached init messages — sequence headers)
 	sub.Attach()
 
-	// Write FLV header
-	// NOTE: We assume both audio and video for now
-	// In a real implementation, we'd detect from stream metadata
-	if err := sub.WriteHeader(true, true); err != nil {
+	// Wait briefly for the publisher's codec init data so we can claim only
+	// the streams that actually exist in the FLV header. Claiming audio when
+	// none is present makes ffmpeg's analyzer hang in find_stream_info.
+	hasAudio, hasVideo := waitForStreams(r.Context(), stream, 2*time.Second)
+	if err := sub.WriteHeader(hasAudio, hasVideo); err != nil {
 		return
 	}
 
-	// Process messages until connection closes
-	// NOTE: This blocks until client disconnects or error occurs
-	if err := sub.ProcessMessages(); err != nil {
-		// Client disconnected or error occurred
-		return
-	}
+	// Process messages until the request context is cancelled (server shutdown
+	// or client disconnect) or a write error fires.
+	_ = sub.ProcessMessages(r.Context())
 }
 
 // RegisterRoutes registers HTTP-FLV routes on the given mux.
 // Routes are registered with a pattern matcher for .flv files.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	// Use a handler function that checks for .flv extension
-	// This allows other routes (like /healthz) to work normally
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Only handle .flv requests, let others fall through
-		if path.Ext(r.URL.Path) == ".flv" {
-			h.ServeHTTP(w, r)
-		} else {
-			// Not an FLV request, return 404
-			// NOTE: This means /healthz must be registered before this
-			w.WriteHeader(http.StatusNotFound)
-		}
-	})
+	mux.HandleFunc("/", h.serveDispatched)
+}
+
+// serveDispatched is the catch-all dispatcher. .flv requests go through to
+// the FLV streaming logic; everything else gets a 404. Exposed as a method so
+// it can be wrapped in middleware (e.g. play-key auth) when registering.
+func (h *Handler) serveDispatched(w http.ResponseWriter, r *http.Request) {
+	if path.Ext(r.URL.Path) == ".flv" {
+		h.ServeHTTP(w, r)
+		return
+	}
+	// Not an FLV request, return 404.
+	// NOTE: This means /healthz must be registered before this.
+	w.WriteHeader(http.StatusNotFound)
 }

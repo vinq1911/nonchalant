@@ -59,7 +59,7 @@ func (m *Manager) Stop() error {
 
 	// Stop all tasks
 	for _, task := range m.tasks {
-		task.Stop()
+		_ = task.Stop()
 	}
 
 	// Wait for all tasks to finish

@@ -1,0 +1,17 @@
+==> 1024 / 1024 clients reached first byte in 0.14 s
+
+=== nonchalant load test ===
+clients spawned       : 1024
+clients first-byte    : 1024
+FLV-validated         : 1024
+read errors           : 42
+steady-state window   : 35.00 s
+steady-state bytes    : 8.96 GB
+steady-state aggregate: 256.0 MB/s
+per-client avg        : 250.0 KB/s (8.75 MB total)
+max-stall ms (median) : 4996
+max-stall ms (p95)    : 5065
+max-stall ms (worst)  : 66487
+jitter CV% (mean)    : 70.6
+jitter CV% (p95)     : 96.6
+bus drops (window)    : 12626 msgs

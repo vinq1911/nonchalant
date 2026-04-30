@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>nonchalant HLS E2E player</title>
+</head>
+<body>
+  <h1>HLS E2E Player</h1>
+  <video id="player" controls autoplay muted playsinline width="320" height="240"></video>
+  <pre id="log"></pre>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <script>
+    const log = (msg) => {
+      const el = document.getElementById('log');
+      el.textContent += msg + '\n';
+      console.log('[hls]', msg);
+    };
+
+    window.hlsState = {
+      ready: false,
+      error: null,
+      manifestLoaded: false,
+      levelCount: 0,
+      currentLevel: -1,
+      currentTime: 0,
+    };
+
+    // startPlayback(url) returns a promise that resolves once the
+    // <video> element actually starts advancing currentTime, or rejects on error.
+    window.startPlayback = (url) => new Promise((resolve, reject) => {
+      if (!window.Hls || !Hls.isSupported()) {
+        reject(new Error('hls.js not supported'));
+        return;
+      }
+      const video = document.getElementById('player');
+      const hls = new Hls({ lowLatencyMode: false, enableWorker: false });
+      window._hls = hls;
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+        window.hlsState.manifestLoaded = true;
+        window.hlsState.levelCount = data.levels.length;
+        log('manifest parsed: ' + data.levels.length + ' level(s)');
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+        window.hlsState.currentLevel = data.level;
+        log('level switched: ' + data.level);
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          const m = `fatal hls error: ${data.type}/${data.details}`;
+          window.hlsState.error = m;
+          log(m);
+          reject(new Error(m));
+        } else {
+          log(`non-fatal: ${data.type}/${data.details}`);
+        }
+      });
+
+      const onTimeUpdate = () => {
+        window.hlsState.currentTime = video.currentTime;
+        if (!window.hlsState.ready && video.currentTime > 0.1) {
+          window.hlsState.ready = true;
+          log('ready: t=' + video.currentTime.toFixed(3));
+          resolve({
+            currentTime: video.currentTime,
+            videoWidth: video.videoWidth,
+            videoHeight: video.videoHeight,
+            levelCount: window.hlsState.levelCount,
+          });
+        }
+      };
+      video.addEventListener('timeupdate', onTimeUpdate);
+
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      video.play().catch((e) => log('video.play rejected: ' + (e.message || e)));
+
+      setTimeout(() => {
+        if (!window.hlsState.ready) {
+          reject(new Error('playback did not start: ' + JSON.stringify(window.hlsState)));
+        }
+      }, 30_000);
+    });
+  </script>
+</body>
+</html>

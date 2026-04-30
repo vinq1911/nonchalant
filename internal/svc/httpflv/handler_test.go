@@ -5,12 +5,12 @@ package httpflv
 
 import (
 	"bytes"
-	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"nonchalant/internal/core/bus"
 	"testing"
-	"time"
+
+	"nonchalant/internal/core/bus"
 )
 
 func TestHTTPFLVHandlerNotFound(t *testing.T) {
@@ -49,56 +49,32 @@ func TestHTTPFLVHandlerWithPublisher(t *testing.T) {
 	registry := bus.NewRegistry()
 	handler := NewHandler(registry)
 
-	// Create stream with publisher
 	key := bus.NewStreamKey("live", "test")
 	stream, _ := registry.GetOrCreate(key)
 	stream.AttachPublisher(1)
 
-	req := httptest.NewRequest("GET", "/live/test.flv", nil)
-	w := httptest.NewRecorder()
+	// Real TCP server — Hijack needs a connection that exposes a *net.TCPConn,
+	// which httptest.ResponseRecorder doesn't.
+	srv := httptest.NewServer(http.HandlerFunc(handler.ServeHTTP))
+	defer srv.Close()
 
-	// Create request with cancelable context
-	ctx, cancel := context.WithCancel(context.Background())
-	req = req.WithContext(ctx)
+	resp, err := http.Get(srv.URL + "/live/test.flv")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
 
-	// Start handler in goroutine (it blocks waiting for messages)
-	done := make(chan bool, 1)
-	go func() {
-		handler.ServeHTTP(w, req)
-		done <- true
-	}()
-
-	// Wait a bit for handler to start and write header
-	time.Sleep(200 * time.Millisecond)
-
-	// Check content type
-	contentType := w.Header().Get("Content-Type")
-	if contentType != "video/x-flv" {
-		t.Errorf("Expected Content-Type video/x-flv, got %s", contentType)
+	if got := resp.Header.Get("Content-Type"); got != "video/x-flv" {
+		t.Errorf("Expected Content-Type video/x-flv, got %s", got)
 	}
 
-	// Check that response starts with FLV header
-	body := w.Body.Bytes()
-	if len(body) < 9 {
-		t.Error("Response body too short")
+	// Read just the FLV header bytes — the connection stays open as a live
+	// stream. Closing the body will terminate the handler.
+	hdr := make([]byte, 9)
+	if _, err := io.ReadFull(resp.Body, hdr); err != nil {
+		t.Fatalf("read header: %v", err)
 	}
-
-	if !bytes.HasPrefix(body, []byte("FLV")) {
-		t.Errorf("Response does not start with FLV signature, got: %v", body[:3])
-	}
-
-	// Cancel request to stop handler
-	// NOTE: Handler may not respond immediately to context cancel
-	// as it's blocked in ProcessMessages, but that's expected behavior
-	cancel()
-
-	// Give it a moment, but don't fail if it doesn't stop immediately
-	// The important part is that the header was written correctly
-	select {
-	case <-done:
-		// Handler stopped
-	case <-time.After(500 * time.Millisecond):
-		// Handler still running, but header was written correctly
-		// This is acceptable for a streaming handler
+	if !bytes.HasPrefix(hdr, []byte("FLV")) {
+		t.Errorf("Response does not start with FLV signature, got: %v", hdr[:3])
 	}
 }

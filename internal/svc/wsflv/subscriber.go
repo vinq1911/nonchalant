@@ -4,7 +4,8 @@
 package wsflv
 
 import (
-	"runtime"
+	"context"
+	"time"
 
 	"nonchalant/internal/core/bus"
 	"nonchalant/internal/core/protocol/flv"
@@ -27,8 +28,13 @@ type Subscriber struct {
 // This allows for easier testing and abstraction.
 type WebSocketConn interface {
 	WriteMessage(messageType int, data []byte) error
+	SetWriteDeadline(t time.Time) error
 	Close() error
 }
+
+// writeDeadline bounds the time a single Write to the WebSocket may block.
+// Slow / stalled clients are evicted instead of pinning the subscriber goroutine.
+const writeDeadline = 5 * time.Second
 
 // NewSubscriber creates a new WebSocket-FLV subscriber.
 func NewSubscriber(conn WebSocketConn, stream *bus.Stream) *Subscriber {
@@ -57,6 +63,7 @@ func (s *Subscriber) WriteHeader(hasAudio, hasVideo bool) error {
 	copy(frame[len(headerBytes):], prevSize)
 
 	// Write as binary WebSocket frame
+	_ = s.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
 	if err := s.conn.WriteMessage(2, frame); err != nil {
 		return err
 	}
@@ -66,25 +73,29 @@ func (s *Subscriber) WriteHeader(hasAudio, hasVideo bool) error {
 }
 
 // ProcessMessages processes messages from the subscriber buffer and writes FLV tags.
-// This runs in a loop until the connection is closed or an error occurs.
+// This runs in a loop until ctx is done, the connection is closed, or an error occurs.
 // ALL non-init frames are dropped until the first video keyframe arrives, so that
 // audio and video start simultaneously and the decoder can initialize properly.
 // Timestamps are rebased so the subscriber's stream starts at ts=0, preventing
 // players from buffering a multi-second gap between init (ts=0) and live data.
 // Allocation: Tag creation allocates header, but payloads are reused from bus.
-// NOTE: This blocks until client disconnects. WebSocket connection close detection
-// happens at the write level.
-func (s *Subscriber) ProcessMessages() error {
+// Returns nil on context cancellation; an error on a write failure.
+func (s *Subscriber) ProcessMessages(ctx context.Context) error {
 	if s.busSubscriber == nil {
 		return nil
 	}
 
 	for {
-		msg, ok := s.busSubscriber.Buffer().Read()
+		msg, ok := s.busSubscriber.Read()
 		if !ok {
-			// Buffer empty — yield to avoid busy-wait CPU burn
-			runtime.Gosched()
-			continue
+			// No data: park on the stream's wake channel until the next
+			// publish (broadcast wake). Costs zero CPU while idle.
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-s.busSubscriber.WaitChan():
+				continue
+			}
 		}
 
 		// Keyframe gating: drop ALL non-init frames until first video keyframe.
@@ -98,18 +109,23 @@ func (s *Subscriber) ProcessMessages() error {
 			}
 		}
 
-		// Convert to FLV tag
-		tag := flv.MuxMessage(msg)
-		if tag == nil {
+		// Encode the FLV tag directly into a pooled buffer — zero allocs in
+		// steady state. WriteMessage must be a single contiguous frame so
+		// we build the buffer rather than doing multiple Writes.
+		tagType, ok := flv.TagTypeForMessage(msg)
+		if !ok {
 			continue
 		}
+		tagBuf := bus.AcquirePayload()
+		tagBuf = flv.AppendTag(tagBuf, tagType, s.rebaseTimestamp(msg), msg.Payload)
 
-		// Rebase timestamp so stream starts at ts=0 for this subscriber
-		tag.Timestamp = s.rebaseTimestamp(msg)
-
-		// Write tag as binary WebSocket frame (each FLV tag = one frame)
-		if err := s.conn.WriteMessage(2, tag.Bytes()); err != nil {
-			return err
+		// Write tag as binary WebSocket frame (each FLV tag = one frame).
+		// The per-write deadline bounds how long a slow client can block us.
+		_ = s.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
+		werr := s.conn.WriteMessage(2, tagBuf)
+		bus.ReleasePayload(tagBuf)
+		if werr != nil {
+			return werr
 		}
 	}
 }

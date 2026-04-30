@@ -1,0 +1,30 @@
+File: nonchalant
+Type: cpu
+Time: 2026-04-30 13:32:30 EEST
+Duration: 30.17s, Total samples = 34.94s (115.82%)
+Showing nodes accounting for 34.49s, 98.71% of 34.94s total
+Dropped 97 nodes (cum <= 0.17s)
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     32.92s 94.22%  internal/poll.ignoringEINTRIO (inline)
+         0     0%     0%     32.92s 94.22%  syscall.syscall
+         0     0%     0%     32.92s 94.22%  syscall.syscalln
+         0     0%     0%     32.91s 94.19%  net/http.(*ServeMux).ServeHTTP
+         0     0%     0%     32.91s 94.19%  net/http.(*conn).serve
+         0     0%     0%     32.91s 94.19%  net/http.HandlerFunc.ServeHTTP
+         0     0%     0%     32.91s 94.19%  net/http.serverHandler.ServeHTTP
+         0     0%     0%     32.91s 94.19%  nonchalant/internal/svc/httpflv.(*Handler).ServeHTTP
+         0     0%     0%     32.91s 94.19%  nonchalant/internal/svc/httpflv.(*Handler).serveDispatched
+         0     0%     0%     32.91s 94.19%  nonchalant/internal/svc/httpflv.(*Subscriber).ProcessMessages
+    32.91s 94.19% 94.19%     32.91s 94.19%  syscall.rawsyscalln
+         0     0% 94.19%     32.82s 93.93%  internal/poll.(*FD).Write
+         0     0% 94.19%     32.82s 93.93%  net.(*conn).Write
+         0     0% 94.19%     32.82s 93.93%  net.(*netFD).Write
+         0     0% 94.19%     32.82s 93.93%  syscall.Write (inline)
+         0     0% 94.19%     32.82s 93.93%  syscall.write
+         0     0% 94.19%      1.73s  4.95%  runtime.mcall
+         0     0% 94.19%      1.70s  4.87%  runtime.schedule
+         0     0% 94.19%      1.68s  4.81%  runtime.park_m
+         0     0% 94.19%      1.65s  4.72%  runtime.findRunnable
+     1.56s  4.46% 98.65%      1.56s  4.46%  runtime.kevent
+     0.02s 0.057% 98.71%      1.56s  4.46%  runtime.netpoll
+         0     0% 98.71%      0.18s  0.52%  nonchalant/internal/svc/rtmp.(*Server).handleConnection

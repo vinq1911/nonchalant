@@ -1,0 +1,5 @@
+client,flv_ok,connect_ms,window_bytes,max_stall_ms,cv_percent,err
+0,true,0.9,3484649,94,27.35,""
+1,true,0.8,3484649,94,27.26,""
+2,true,0.9,3484963,94,26.54,""
+3,true,0.9,3484649,94,27.26,""

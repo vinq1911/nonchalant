@@ -64,11 +64,26 @@ func (s *ServiceSession) HandleCreateStream(command amf0.Array) error {
 // HandlePublish handles the publish command.
 // streamID is the stream ID from the message header where the publish command was received.
 // Sends StreamBegin + onStatus NetStream.Publish.Start on success.
+// If publish-key authentication is configured, the stream name must include
+// "?key=<secret>"; otherwise the publish is rejected with NetStream.Publish.Failed.
 func (s *ServiceSession) HandlePublish(command amf0.Array, streamID uint32) error {
 	// publish format: ["publish", txnID, null, streamName, publishType]
-	streamName := extractStreamName(command)
-	if streamName == "" {
+	rawName := extractStreamName(command)
+	if rawName == "" {
 		return fmt.Errorf("stream name not found in publish command")
+	}
+
+	streamName, key := ParseStreamName(rawName)
+	if streamName == "" {
+		return fmt.Errorf("empty stream name")
+	}
+
+	if !s.auth.Allow(key) {
+		log.Printf("Publish rejected: invalid or missing auth key for %s", streamName)
+		// Notify client via onStatus, then return error to close the session.
+		_ = s.sendOnStatus(streamID, "error",
+			"NetStream.Publish.Failed", "Authentication failed")
+		return fmt.Errorf("auth failed for stream %q", streamName)
 	}
 
 	app := s.GetApp()

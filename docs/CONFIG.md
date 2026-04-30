@@ -13,22 +13,64 @@ Configuration is YAML-only. Unknown fields are rejected.
 
 ```yaml
 server:
-  health_port: 8080  # Port for health endpoint (1-65535)
-  http_port: 8081    # Port for future HTTP services (1-65535)
-  rtmp_port: 1935    # Port for future RTMP service (1-65535)
+  health_port: 8080  # Port for /healthz endpoint (1-65535)
+  http_port:   8081  # Port for HTTP-FLV, WS-FLV, HLS, DASH, API, /metrics
+  rtmp_port:   1935  # Port for RTMP ingest
+
+auth:                 # Optional. Omit for anonymous publishing/playback.
+  publish_keys:       # Pre-shared secrets accepted on RTMP publish.
+    - changeme        # rtmp://host/live/foo?key=changeme
+  play_keys:          # Pre-shared secrets accepted on FLV/WS/HLS/DASH playback.
+    - watch-secret    # http://host/live/foo.flv?key=watch-secret
+
+hls:                  # Optional HLS / DASH packager tuning.
+  low_latency: false  # When true: 1s fMP4 segments, LL-HLS friendly.
+  ladder:             # Optional ABR (multi-bitrate) renditions.
+    - {name: 720p,  width: 1280, height: 720, video_bitrate: 2500}
+    - {name: 480p,  width: 854,  height: 480, video_bitrate: 1100}
+    - {name: 240p,  width: 426,  height: 240, video_bitrate: 400}
+    - {name: audio, audio_only: true, audio_bitrate: 64}
+
+relays:               # Optional. Each entry runs as a managed task.
+  - app: live
+    name: mystream
+    mode: pull        # "pull" (remote → local) or "push" (local → remote)
+    remote_url: rtmp://remote-server:1935/live/source
+    reconnect: true
+    max_retries: 5
+    retry_delay_seconds: 5
 ```
 
 ## Validation Rules
 
-- All ports must be between 1 and 65535
-- All ports must be unique (no duplicates)
-- Default values are applied if not specified
+- All ports must be between 1 and 65535.
+- All ports must be unique across `health_port`, `http_port`, and `rtmp_port`.
+- Default values are applied when a section is omitted.
+- Each relay requires `app`, `name`, `mode`, and `remote_url`.
+- `auth.publish_keys` is optional. When present and non-empty, every publisher
+  must include `?key=<secret>` in the RTMP stream name.
+- Each `hls.ladder` rung needs a unique alphanumeric `name` (no slashes / dots).
+  Video rungs require `width`, `height`, and `video_bitrate` (kbit/s).
+  Audio-only rungs set `audio_only: true` and may set `audio_bitrate`.
+
+## ABR / multi-bitrate notes
+
+- An empty `hls.ladder` runs the packager in stream-copy mode: one ffmpeg
+  per stream, no transcoding, ~zero CPU. The default.
+- A non-empty ladder runs `libx264` per video rung. CPU is roughly
+  `Σ rungs` × bitrate-dependent. Consider hardware acceleration if you
+  configure many rungs.
+- Per-rendition URLs follow `/hls/{app}/{name}/{rung}/index.m3u8` and
+  `/hls/{app}/{name}/{rung}/seg_NNNNN.ts`.
+- DASH's MPD lists each video rung as a Representation under one
+  AdaptationSet automatically.
 
 ## Loading
 
-Configuration is loaded via the --config flag:
+Configuration is loaded via the `--config` flag:
+
 ```
 ./nonchalant --config configs/nonchalant.example.yaml
 ```
 
-Default path is configs/nonchalant.example.yaml.
+Default path is `configs/nonchalant.example.yaml`.

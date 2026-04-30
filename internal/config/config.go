@@ -15,8 +15,47 @@ import (
 // All fields must have explicit defaults or be required.
 type Config struct {
 	Server    ServerConfig     `yaml:"server"`
+	Auth      AuthConfig       `yaml:"auth,omitempty"`
+	HLS       HLSConfig        `yaml:"hls,omitempty"`
 	Relays    []RelayConfig    `yaml:"relays,omitempty"`
 	Transcode *TranscodeConfig `yaml:"transcode,omitempty"`
+}
+
+// HLSConfig tunes the native HLS / DASH packager.
+// LowLatency switches to 1-second fMP4 segments with the program-date-time
+// flag and independent segments, suitable for LL-HLS-aware players.
+// Ladder enables adaptive-bitrate (ABR) packaging: ffmpeg encodes one rendition
+// per rung and emits a master playlist (.m3u8) or multi-AdaptationSet MPD.
+// When the ladder is empty the packager runs in stream-copy single-rendition
+// mode and is essentially free; when present it transcodes, which is CPU-heavy.
+type HLSConfig struct {
+	LowLatency bool         `yaml:"low_latency,omitempty"`
+	Ladder     []LadderRung `yaml:"ladder,omitempty"`
+}
+
+// LadderRung describes a single ABR rendition. Width / Height are the
+// target frame size; VideoBitrate is in kbit/s. Name is used as the URL
+// segment ("v0", "v1", ...) and as the rendition tag in the master playlist.
+// When AudioOnly is true the rung produces audio only — useful for pure
+// audio fallbacks on very lossy networks.
+type LadderRung struct {
+	Name         string `yaml:"name"`
+	Width        int    `yaml:"width,omitempty"`
+	Height       int    `yaml:"height,omitempty"`
+	VideoBitrate int    `yaml:"video_bitrate,omitempty"` // kbit/s
+	AudioBitrate int    `yaml:"audio_bitrate,omitempty"` // kbit/s
+	AudioOnly    bool   `yaml:"audio_only,omitempty"`
+}
+
+// AuthConfig configures publish- and play-side authentication.
+// PublishKeys is a list of pre-shared secrets a publisher must present in the
+// RTMP stream name as "?key=<secret>". When empty, publishing is anonymous.
+// PlayKeys is the same idea for HTTP-FLV / WS-FLV / HLS / DASH consumers,
+// who pass the secret as a "?key=<secret>" query parameter on the playback URL.
+// When empty, playback is anonymous.
+type AuthConfig struct {
+	PublishKeys []string `yaml:"publish_keys,omitempty"`
+	PlayKeys    []string `yaml:"play_keys,omitempty"`
 }
 
 // ServerConfig defines HTTP server settings.

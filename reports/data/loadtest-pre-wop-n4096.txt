@@ -1,0 +1,21 @@
+  t= 1.0s  alive=4096  total=  0.08 GB  agg=  78.8 MB/s
+  t= 2.0s  alive=4096  total=  0.18 GB  agg=  88.5 MB/s
+  t= 3.0s  alive=4096  total=  0.27 GB  agg=  92.3 MB/s
+  t= 4.0s  alive=4096  total=  0.38 GB  agg=  95.9 MB/s
+  t= 5.0s  alive=4096  total=  0.48 GB  agg=  97.7 MB/s
+  t= 6.0s  alive=4096  total=  0.58 GB  agg=  99.2 MB/s
+  t= 7.0s  alive=4096  total=  0.81 GB  agg= 118.5 MB/s
+  t= 8.0s  alive=4096  total=  1.08 GB  agg= 137.5 MB/s
+  t= 9.0s  alive=4096  total=  1.35 GB  agg= 153.5 MB/s
+
+=== nonchalant load test ===
+clients         : 4096
+duration        : 30.10 s
+FLV-validated   : 3230 / 4096
+header errors   : 866
+read errors     : 0
+total received  : 1.66 GB
+aggregate       : 55.0 MB/s
+per-client min  : 0.00 MB
+per-client max  : 3.38 MB
+per-client avg  : 0.51 MB

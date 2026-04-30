@@ -15,15 +15,18 @@ import (
 type ServiceSession struct {
 	*rtmpprotocol.Session
 	registry     *bus.Registry
+	auth         *Authenticator
 	publisher    *Publisher
 	nextStreamID uint32
 }
 
 // NewServiceSession creates a new service session.
-func NewServiceSession(conn *sessionConn, registry *bus.Registry) *ServiceSession {
+// auth may be nil to allow anonymous publishing (backward compatible).
+func NewServiceSession(conn *sessionConn, registry *bus.Registry, auth *Authenticator) *ServiceSession {
 	return &ServiceSession{
 		Session:      rtmpprotocol.NewSession(conn),
 		registry:     registry,
+		auth:         auth,
 		nextStreamID: 1,
 	}
 }

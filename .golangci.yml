@@ -1,0 +1,60 @@
+# golangci-lint v2 configuration for nonchalant.
+# Tight set of linters by default — keeps the signal-to-noise ratio sane.
+
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - ffmpeg
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - misspell
+    - revive
+    - unconvert
+    - copyloopvar
+    - nilerr
+  settings:
+    errcheck:
+      exclude-functions:
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).Close
+        - (io.Closer).Close
+    staticcheck:
+      checks:
+        - all
+        - -QF1003
+        - -QF1008
+        - -ST1000
+        - -ST1022
+    revive:
+      rules:
+        - name: var-naming
+        - name: package-comments
+          disabled: true
+        - name: exported
+          disabled: true
+  exclusions:
+    paths:
+      - scripts
+      - e2e
+    rules:
+      - path: _test\.go$
+        linters:
+          - errcheck
+          - bodyclose
+      - path: internal/itest
+        linters:
+          - errcheck
+          - bodyclose

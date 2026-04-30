@@ -4,13 +4,34 @@
 package wsflv
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"nonchalant/internal/core/bus"
 
 	"github.com/gorilla/websocket"
 )
+
+// waitForStreams polls the stream's cached init data and returns the
+// (hasAudio, hasVideo) flags suitable for the FLV header. Mirrors the
+// httpflv version — see that file for rationale.
+func waitForStreams(ctx context.Context, stream *bus.Stream, timeout time.Duration) (bool, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		hasAudio := stream.HasAudioInit()
+		hasVideo := stream.HasVideoInit()
+		if (hasAudio && hasVideo) || time.Now().After(deadline) {
+			return hasAudio, hasVideo
+		}
+		select {
+		case <-ctx.Done():
+			return hasAudio, hasVideo
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
 
 // Handler handles WebSocket-FLV requests.
 type Handler struct {
@@ -83,23 +104,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sub := NewSubscriber(conn, stream)
 	defer func() {
 		sub.Detach()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	// Attach to stream
 	sub.Attach()
 
-	// Write FLV header
-	// NOTE: We assume both audio and video for now
-	// In a real implementation, we'd detect from stream metadata
-	if err := sub.WriteHeader(true, true); err != nil {
+	// Wait briefly for codec init data so the FLV header reflects only the
+	// streams that actually exist; otherwise ffmpeg/flv.js can hang waiting
+	// for an audio packet that never arrives.
+	hasAudio, hasVideo := waitForStreams(r.Context(), stream, 2*time.Second)
+	if err := sub.WriteHeader(hasAudio, hasVideo); err != nil {
 		return
 	}
 
-	// Process messages until connection closes
-	// NOTE: This blocks until client disconnects or error occurs
-	if err := sub.ProcessMessages(); err != nil {
-		// Client disconnected or error occurred
+	// Process messages until the request context is cancelled (server shutdown
+	// or client disconnect) or a write error fires.
+	if err := sub.ProcessMessages(r.Context()); err != nil {
 		return
 	}
 }

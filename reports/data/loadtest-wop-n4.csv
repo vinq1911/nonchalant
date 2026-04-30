@@ -1,0 +1,6 @@
+client,flv_ok,bytes,duration_seconds,err
+0,true,3471140,10.019,""
+1,true,3471140,10.019,""
+2,true,3471140,10.019,""
+3,true,3471140,10.019,""
+AGGREGATE,,total_bytes=13884560,elapsed=10.019,

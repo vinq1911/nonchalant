@@ -23,8 +23,7 @@ type Service struct {
 type RelayManager interface {
 	TaskCount() int
 	GetTasks() []relay.TaskInfo
-	// NOTE: Restart functionality would be added here
-	// For now, we only expose read-only access
+	Restart(app, name string) error
 }
 
 // RelayTaskInfo represents information about a relay task for API responses.

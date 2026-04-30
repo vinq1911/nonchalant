@@ -18,11 +18,15 @@ import (
 type Server struct {
 	registry *bus.Registry
 	listener net.Listener
+	auth     *Authenticator // nil means anonymous publishing is allowed
 }
 
 // NewServer creates a new RTMP server.
-func NewServer(registry *bus.Registry) *Server {
-	return &Server{registry: registry}
+// Pass a nil Authenticator (or one returned for an empty key list) to allow
+// anonymous publishing; otherwise publishers must include "?key=<secret>"
+// in the stream name on the publish command.
+func NewServer(registry *bus.Registry, auth *Authenticator) *Server {
+	return &Server{registry: registry, auth: auth}
 }
 
 // Listen starts listening on the specified address.
@@ -62,7 +66,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}()
 
 	sc := &sessionConn{Conn: conn}
-	session := NewServiceSession(sc, s.registry)
+	session := NewServiceSession(sc, s.registry, s.auth)
 	defer session.Close()
 
 	if err := session.PerformHandshake(); err != nil {

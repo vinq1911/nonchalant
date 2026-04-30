@@ -30,7 +30,7 @@ func NewPipeline(inputURL, outputURL, format string) (*Pipeline, error) {
 	// Create output context
 	output, err := ffx.NewOutput(outputURL, format)
 	if err != nil {
-		input.Close()
+		_ = input.Close()
 		return nil, err
 	}
 

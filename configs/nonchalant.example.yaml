@@ -2,6 +2,37 @@
 # Copy this file and modify as needed for your deployment.
 
 server:
-  health_port: 8080  # Port for health endpoint
-  http_port: 8081    # Port for future HTTP services
-  rtmp_port: 1935    # Port for future RTMP service
+  health_port: 8080  # /healthz endpoint
+  http_port: 8081    # HTTP-FLV, WebSocket-FLV, HLS, DASH, API, /metrics
+  rtmp_port: 1935    # RTMP ingest
+
+# Optional: require pre-shared keys on publish and / or playback.
+# Publishers pass "?key=<secret>" in the RTMP stream name.
+# Subscribers pass "?key=<secret>" as a query parameter on the playback URL.
+# Omit either field to allow anonymous access in that direction.
+# auth:
+#   publish_keys:
+#     - changeme
+#   play_keys:
+#     - watch-secret
+
+# Optional HLS / DASH packager tuning.
+# - low_latency: switches HLS to 1 s fMP4 segments (LL-HLS friendly).
+# - ladder: enables ABR by transcoding one rendition per rung. When the
+#   ladder is empty (default) the packager just stream-copies the source —
+#   essentially free. With a ladder, every rung runs libx264.
+# hls:
+#   low_latency: false
+#   ladder:
+#     - {name: 720p,  width: 1280, height: 720, video_bitrate: 2500}
+#     - {name: 480p,  width: 854,  height: 480, video_bitrate: 1100}
+#     - {name: 240p,  width: 426,  height: 240, video_bitrate: 400}
+#     - {name: audio, audio_only: true, audio_bitrate: 64}
+
+# Optional: relay tasks. Each entry creates a managed pull or push relay.
+# relays:
+#   - app: live
+#     name: mystream
+#     mode: pull
+#     remote_url: rtmp://remote-server:1935/live/source
+#     reconnect: true

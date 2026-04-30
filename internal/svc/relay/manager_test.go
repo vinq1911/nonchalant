@@ -126,3 +126,30 @@ func TestManagerStop(t *testing.T) {
 		t.Error("Manager stop timed out")
 	}
 }
+
+// TestManagerRestart confirms that Restart replaces the running Task with a
+// fresh instance and that an unknown (app,name) returns an error.
+func TestManagerRestart(t *testing.T) {
+	registry := bus.NewRegistry()
+	manager := NewManager(registry)
+	defer manager.Stop()
+
+	cfg := &config.Config{
+		Relays: []config.RelayConfig{
+			{App: "live", Name: "x", Mode: "pull", RemoteURL: "rtmp://127.0.0.1:1/live/x"},
+		},
+	}
+	if err := manager.StartTasks(cfg); err != nil {
+		t.Fatalf("StartTasks: %v", err)
+	}
+
+	if err := manager.Restart("nope", "missing"); err == nil {
+		t.Error("Restart of unknown relay should return error")
+	}
+	if err := manager.Restart("live", "x"); err != nil {
+		t.Errorf("Restart of known relay should succeed, got %v", err)
+	}
+	if got := manager.TaskCount(); got != 1 {
+		t.Errorf("after restart TaskCount = %d, want 1", got)
+	}
+}

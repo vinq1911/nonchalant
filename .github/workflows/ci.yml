@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (fmt, lint, unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./cmd/... ./internal/...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.1
+          args: --timeout=5m
+
+      - name: make check
+        run: make check
+
+      - name: race-detector unit tests
+        run: go test -race -count=1 ./cmd/... ./internal/...
+
+  itest:
+    name: integration tests
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: build
+        run: make build
+
+      - name: integration tests
+        run: go test -race -count=1 -timeout 10m ./internal/itest/...
+
+  e2e:
+    name: e2e (Playwright)
+    runs-on: ubuntu-latest
+    needs: check
+    defaults:
+      run:
+        working-directory: e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: build server
+        working-directory: .
+        run: make build
+
+      - name: install playwright deps
+        run: npm ci
+
+      - name: derive playwright version
+        id: pw
+        run: |
+          ver=$(node -e "console.log(require('@playwright/test/package.json').version)")
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: cache playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: install chromium (cached)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: install chromium system deps only
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: run e2e
+        run: npx playwright test
+
+      - name: upload playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 14

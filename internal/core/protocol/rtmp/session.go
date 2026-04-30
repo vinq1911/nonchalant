@@ -29,7 +29,6 @@ type Session struct {
 	writeChunkSize uint32 // Chunk size for outgoing messages
 	app            string
 	streamName     string
-	streamID       uint32
 	// ACK tracking for RTMP protocol
 	ackSize   uint32 // Window acknowledgement size we sent to client
 	inAckSize uint32 // Total bytes received from client

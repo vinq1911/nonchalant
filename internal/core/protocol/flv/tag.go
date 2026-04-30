@@ -1,22 +1,70 @@
 // If you are AI: This file implements FLV tag creation and encoding.
-// Tags are created from MediaMessage instances with minimal allocations.
+// Subscribers stream live media at high rate; the AppendTag-based path is
+// allocation-free (caller supplies the destination buffer, typically pooled).
 
 package flv
 
 import (
 	"encoding/binary"
+
+	"nonchalant/internal/core/bus"
 )
 
 // Tag represents an FLV tag (audio, video, or script).
+// NOTE: Bytes() is retained for backward compatibility; it allocates. The
+// hot path (subscriber loop) uses AppendTag — no struct, no allocation.
 type Tag struct {
 	Type      byte
 	Timestamp uint32
 	Data      []byte
 }
 
+// AppendTag appends a complete FLV tag (11-byte header + payload + 4-byte
+// previous-tag-size trailer) to dst and returns the extended slice. This is
+// the zero-allocation path used by HTTP-FLV / WS-FLV subscribers.
+//
+// The caller owns dst; pass a buffer from bus.AcquirePayload to reuse memory.
+// For payloads <= cap(dst)-15 this performs no heap allocation.
+func AppendTag(dst []byte, tagType byte, timestamp uint32, payload []byte) []byte {
+	size := uint32(len(payload))
+	dst = append(dst,
+		tagType,
+		byte(size>>16), byte(size>>8), byte(size),
+		// Timestamp: lower 24 bits then high byte (TimestampExtended).
+		byte(timestamp>>16), byte(timestamp>>8), byte(timestamp),
+		byte(timestamp>>24),
+		// Stream ID is always 0.
+		0, 0, 0,
+	)
+	dst = append(dst, payload...)
+	prev := 11 + size
+	dst = append(dst,
+		byte(prev>>24), byte(prev>>16), byte(prev>>8), byte(prev),
+	)
+	return dst
+}
+
+// TagTypeForMessage returns the FLV tag type for a bus.MediaMessage, plus
+// ok=false if the message type has no FLV tag (we only emit audio, video,
+// and metadata as script-data; everything else is silently dropped).
+func TagTypeForMessage(msg *bus.MediaMessage) (byte, bool) {
+	if msg == nil {
+		return 0, false
+	}
+	switch msg.Type {
+	case bus.MessageTypeAudio:
+		return TagTypeAudio, true
+	case bus.MessageTypeVideo:
+		return TagTypeVideo, true
+	case bus.MessageTypeMetadata:
+		return TagTypeScript, true
+	}
+	return 0, false
+}
+
 // Bytes encodes the tag as FLV tag bytes.
 // Format: tag type (1) + data size (3) + timestamp lower (3) + timestamp upper (1) + stream ID (3) + data (N) + previous tag size (4)
-// Allocation: Creates new slice for complete tag, reuses data slice.
+// Allocation: allocates a new slice; prefer AppendTag for hot paths.
 func (t *Tag) Bytes() []byte {
 	dataSize := uint32(len(t.Data))
 

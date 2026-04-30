@@ -19,10 +19,12 @@ type ServerResponse struct {
 
 // StreamInfo represents information about a stream.
 type StreamInfo struct {
-	App             string `json:"app"`
-	Name            string `json:"name"`
-	HasPublisher    bool   `json:"has_publisher"`
-	SubscriberCount int    `json:"subscriber_count"`
+	App               string `json:"app"`
+	Name              string `json:"name"`
+	HasPublisher      bool   `json:"has_publisher"`
+	SubscriberCount   int    `json:"subscriber_count"`
+	MessagesPublished uint64 `json:"messages_published"`
+	MessagesDropped   uint64 `json:"messages_dropped"`
 }
 
 // StreamsResponse represents the /api/streams response.
@@ -60,6 +62,7 @@ func (s *Service) handleServer(w http.ResponseWriter, r *http.Request) {
 			"http_flv",
 			"ws_flv",
 			"relay",
+			"metrics",
 		},
 	}
 
@@ -87,10 +90,12 @@ func (s *Service) handleStreams(w http.ResponseWriter, r *http.Request) {
 		}
 
 		info := StreamInfo{
-			App:             key.App,
-			Name:            key.Name,
-			HasPublisher:    stream.HasPublisher(),
-			SubscriberCount: stream.SubscriberCount(),
+			App:               key.App,
+			Name:              key.Name,
+			HasPublisher:      stream.HasPublisher(),
+			SubscriberCount:   stream.SubscriberCount(),
+			MessagesPublished: stream.MessagesPublished(),
+			MessagesDropped:   stream.TotalDropped(),
 		}
 		streams = append(streams, info)
 	}
@@ -133,33 +138,32 @@ func (s *Service) handleRelay(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRelayRestart handles POST /api/relay/restart.
-// Restarts a relay task asynchronously.
+// Synchronously stops and restarts the named relay. Responds 404 if no
+// such relay is configured. Body: {"app":"...","name":"..."}.
 func (s *Service) handleRelayRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	// Parse request body
 	var req struct {
 		App  string `json:"app"`
 		Name string `json:"name"`
 	}
-
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	// Validate input
 	if req.App == "" || req.Name == "" {
 		s.writeError(w, http.StatusBadRequest, "app and name are required")
 		return
 	}
 
-	// NOTE: Full implementation would restart the relay task asynchronously
-	// For now, return success
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "restart initiated"})
+	if err := s.relayMgr.Restart(req.App, req.Name); err != nil {
+		s.writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "restarted"})
 }
 
 // writeJSON writes a JSON response.

@@ -5,14 +5,19 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
+	"nonchalant/internal/auth"
 	"nonchalant/internal/config"
 	"nonchalant/internal/core/bus"
 	"nonchalant/internal/svc/api"
 	"nonchalant/internal/svc/health"
 	"nonchalant/internal/svc/httpflv"
+	"nonchalant/internal/svc/metrics"
+	"nonchalant/internal/svc/pkger"
 	"nonchalant/internal/svc/relay"
 	"nonchalant/internal/svc/rtmp"
 	"nonchalant/internal/svc/transcode"
@@ -24,6 +29,8 @@ type Server struct {
 	httpServer   *http.Server
 	healthSvc    *health.Service
 	apiSvc       *api.Service
+	metricsSvc   *metrics.Service
+	pkgerSvc     *pkger.Service
 	httpflvSvc   *httpflv.Service
 	wsflvSvc     *wsflv.Service
 	rtmpServer   *rtmp.Server
@@ -43,26 +50,62 @@ func New(cfg *config.Config) *Server {
 	// Create bus registry
 	registry := bus.NewRegistry()
 
-	// Create HTTP-FLV service
-	httpflvSvc := httpflv.NewService(registry)
-	httpflvSvc.RegisterRoutes(mux)
+	// Build the publish and play key sets. nil → anonymous (backward
+	// compatible). Both come from cfg.Auth.
+	publishKeys := auth.NewKeySet(cfg.Auth.PublishKeys)
+	playKeys := auth.NewKeySet(cfg.Auth.PlayKeys)
 
-	// Create WebSocket-FLV service
-	wsflvSvc := wsflv.NewService(registry)
-	wsflvSvc.RegisterRoutes(mux)
+	rtmpServer := rtmp.NewServer(registry, publishKeys)
 
-	// Create RTMP server
-	rtmpServer := rtmp.NewServer(registry)
-
-	// Create relay manager
+	// Create relay manager and tell it where our local listeners are so it
+	// can build URLs back into us when relays reconnect via ffmpeg. The first
+	// configured publish/play key (if any) is reused for the relay's own auth
+	// against our endpoints.
 	relayMgr := relay.NewManager(registry)
+	relayMgr.SetEndpoints(
+		cfg.Server.RTMPPort, cfg.Server.HTTPPort,
+		firstKey(cfg.Auth.PublishKeys), firstKey(cfg.Auth.PlayKeys),
+	)
 
 	// Create transcode manager (optional, works with or without FFmpeg)
 	transcodeMgr := transcode.NewManager(registry)
 
-	// Create API service
+	// Register API and metrics BEFORE httpflv — httpflv mounts a catch-all "/"
+	// pattern which would otherwise mask /api/* and /metrics.
 	apiSvc := api.NewService(registry, relayMgr)
 	apiSvc.RegisterRoutes(mux)
+
+	metricsSvc := metrics.NewService(registry, relayMgr)
+	metricsSvc.RegisterRoutes(mux)
+
+	// pprof: /debug/pprof/* (CPU, heap, goroutine, allocs, mutex, block).
+	// Mounted before httpflv's catch-all so the routes are reachable.
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	// HLS / DASH packager service. If creation fails (e.g. no writable temp
+	// directory) we log and continue — the rest of the server still works.
+	pkgerSvc, pkgerErr := pkger.NewService(registry, cfg.Server.HTTPPort, playKeys,
+		pkger.Options{
+			LowLatency: cfg.HLS.LowLatency,
+			Ladder:     ladderToPkger(cfg.HLS.Ladder),
+		})
+	if pkgerErr != nil {
+		log.Printf("HLS/DASH packager disabled: %v", pkgerErr)
+	} else {
+		pkgerSvc.RegisterRoutes(mux)
+	}
+
+	// Create WebSocket-FLV service (uses a distinct /ws/ prefix)
+	wsflvSvc := wsflv.NewService(registry, playKeys)
+	wsflvSvc.RegisterRoutes(mux)
+
+	// Create HTTP-FLV service (catch-all on "/", must register last)
+	httpflvSvc := httpflv.NewService(registry, playKeys)
+	httpflvSvc.RegisterRoutes(mux)
 
 	// HTTP server listens on HTTP port
 	// Health endpoint is also available on this port
@@ -76,6 +119,8 @@ func New(cfg *config.Config) *Server {
 		httpServer:   httpServer,
 		healthSvc:    healthSvc,
 		apiSvc:       apiSvc,
+		metricsSvc:   metricsSvc,
+		pkgerSvc:     pkgerSvc,
 		httpflvSvc:   httpflvSvc,
 		wsflvSvc:     wsflvSvc,
 		rtmpServer:   rtmpServer,
@@ -106,7 +151,7 @@ func (s *Server) Start(cfg *config.Config) error {
 	}
 	go func() {
 		if err := s.rtmpServer.Accept(); err != nil {
-			// Log error but don't fail startup
+			log.Printf("RTMP accept loop exited: %v", err)
 		}
 	}()
 
@@ -128,18 +173,61 @@ func (s *Server) ShutdownWithTimeout() error {
 
 	// Stop relay manager
 	if s.relayMgr != nil {
-		s.relayMgr.Stop()
+		if err := s.relayMgr.Stop(); err != nil {
+			log.Printf("relay manager stop: %v", err)
+		}
 	}
 
 	// Stop transcode manager
 	if s.transcodeMgr != nil {
-		s.transcodeMgr.Stop()
+		if err := s.transcodeMgr.Stop(); err != nil {
+			log.Printf("transcode manager stop: %v", err)
+		}
 	}
 
 	// Close RTMP server
 	if s.rtmpServer != nil {
-		s.rtmpServer.Close()
+		if err := s.rtmpServer.Close(); err != nil {
+			log.Printf("rtmp server close: %v", err)
+		}
+	}
+
+	// Stop HLS/DASH packager (kills any spawned ffmpeg subprocesses)
+	if s.pkgerSvc != nil {
+		s.pkgerSvc.Stop()
 	}
 
 	return s.Shutdown(ctx)
+}
+
+// firstKey returns the first non-empty key in keys, or "" if there are none.
+// Used to pick a default identity for outbound relay connections.
+func firstKey(keys []string) string {
+	for _, k := range keys {
+		if k != "" {
+			return k
+		}
+	}
+	return ""
+}
+
+// ladderToPkger maps the YAML ABR ladder onto the pkger-local rung type.
+// Avoids forcing the pkger package to import config (and the cycle that comes
+// with it).
+func ladderToPkger(rungs []config.LadderRung) []pkger.LadderRung {
+	if len(rungs) == 0 {
+		return nil
+	}
+	out := make([]pkger.LadderRung, len(rungs))
+	for i, r := range rungs {
+		out[i] = pkger.LadderRung{
+			Name:         r.Name,
+			Width:        r.Width,
+			Height:       r.Height,
+			VideoBitrate: r.VideoBitrate,
+			AudioBitrate: r.AudioBitrate,
+			AudioOnly:    r.AudioOnly,
+		}
+	}
+	return out
 }

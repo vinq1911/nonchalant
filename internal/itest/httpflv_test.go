@@ -70,8 +70,11 @@ func TestHTTPFLVPlayback(t *testing.T) {
 	pub := exec.Command("ffmpeg", "-re", "-i", testVideo,
 		"-c", "copy", "-f", "flv", rtmpURL)
 	pub.Stderr = os.Stderr
+	if err := pub.Start(); err != nil {
+		t.Fatalf("Failed to start publisher: %v", err)
+	}
 	pubErr := make(chan error, 1)
-	go func() { pubErr <- pub.Run() }()
+	go func() { pubErr <- pub.Wait() }()
 	defer func() {
 		pub.Process.Signal(syscall.SIGTERM)
 		<-pubErr

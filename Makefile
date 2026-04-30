@@ -1,6 +1,6 @@
 # If you are AI: This Makefile provides all build, test, and deployment targets for nonchalant.
 
-.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt test test-short test-race bench itest itest-clean docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video test-video-loop test-send test-receive test-send-receive-ws test-roundtrip
+.PHONY: help build run docker-build docker-run docker-restart docker-stop kill fmt lint test test-short test-race bench bench-fast itest itest-clean e2e e2e-install e2e-headed e2e-report docs docs-check check-lines check-comments check test-rtmp-ingest test-httpflv test-wsflv test-api test-workflow test-features test-video test-video-loop test-send test-receive test-send-receive-ws test-roundtrip
 
 # Configuration variables
 CONFIG ?= configs/nonchalant.example.yaml
@@ -24,12 +24,18 @@ help:
 	@echo "  docker-stop        - Stop container"
 	@echo "  kill               - Kill running process (macOS/Linux)"
 	@echo "  fmt                - Format code"
+	@echo "  lint               - Run golangci-lint v2"
 	@echo "  test               - Run all tests"
 	@echo "  test-short         - Run short tests"
 	@echo "  test-race          - Run tests with race detector"
-	@echo "  bench              - Run benchmarks"
+	@echo "  bench              - Run all benchmarks (fast: skip itest)"
+	@echo "  bench-fast         - Run unit-package benchmarks only (fastest)"
 	@echo "  itest              - Run integration tests"
 	@echo "  itest-clean        - Clean integration test artifacts"
+	@echo "  e2e                - Run Playwright browser E2E tests"
+	@echo "  e2e-install        - Install Playwright deps + chromium"
+	@echo "  e2e-headed         - Run E2E tests with browser visible"
+	@echo "  e2e-report         - Open last E2E HTML report"
 	@echo "  docs               - Generate documentation"
 	@echo "  docs-check         - Check if docs are up to date"
 	@echo "  check-lines        - Check file line limits"
@@ -94,6 +100,12 @@ kill:
 fmt:
 	go fmt ./...
 
+# golangci-lint (v2.x). Install with `brew install golangci-lint` or
+# `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- v2.1.0`
+lint:
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed; see Makefile comment"; exit 1; }
+	golangci-lint run ./cmd/... ./internal/...
+
 # Test targets
 # NOTE: Exclude scripts/ directory as it contains multiple main functions
 test:
@@ -106,7 +118,19 @@ test-race:
 	go test -race ./cmd/... ./internal/...
 
 bench:
-	go test -bench=. -benchmem ./cmd/... ./internal/...
+	go test -bench=. -benchmem -run=^$$ -benchtime=1s ./cmd/... ./internal/...
+
+# Run benchmarks excluding the integration package (which spawns servers and
+# is the slowest). Useful for fast iteration on bus / handler / auth perf.
+bench-fast:
+	go test -bench=. -benchmem -run=^$$ -benchtime=500ms \
+	  ./internal/auth/... \
+	  ./internal/core/... \
+	  ./internal/svc/api/... \
+	  ./internal/svc/metrics/... \
+	  ./internal/svc/httpflv/... \
+	  ./internal/svc/wsflv/... \
+	  ./internal/svc/rtmp/...
 
 # Integration tests
 itest: build
@@ -115,9 +139,22 @@ itest: build
 itest-clean:
 	rm -f bin/nonchalant
 
+# Browser-driven end-to-end tests (Playwright). Requires Node.js and ffmpeg.
+e2e-install:
+	cd e2e && npm install && npx playwright install chromium
+
+e2e: build
+	cd e2e && npx playwright test
+
+e2e-headed: build
+	cd e2e && npx playwright test --headed
+
+e2e-report:
+	cd e2e && npx playwright show-report
+
 # Documentation
 docs:
-	go run ./scripts/gen-docs.go
+	go run ./scripts/gen-docs
 
 docs-check: docs
 	@if [ -f docs/.stamp ]; then \
@@ -129,10 +166,10 @@ docs-check: docs
 
 # Enforcement checks
 check-lines:
-	go run ./scripts/check_lines.go .
+	go run ./scripts/check-lines .
 
 check-comments:
-	go run ./scripts/check_comments.go .
+	go run ./scripts/check-comments .
 
 # Aggregate check target
 check: fmt check-lines check-comments docs-check test

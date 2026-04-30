@@ -31,12 +31,12 @@ func NewPublisher(session *rtmpprotocol.Session, stream *bus.Stream, publisherID
 // PublishAudio publishes an audio message to the stream.
 // Detects AAC sequence headers and marks them as init data for late-joining subscribers.
 func (p *Publisher) PublishAudio(timestamp uint32, payload []byte) {
-	msg := bus.AcquireMessage()
+	msg := p.stream.AcquireMessage()
 	msg.Type = bus.MessageTypeAudio
 	msg.Timestamp = timestamp
 	msg.IsInit = isAACSequenceHeader(payload)
 
-	buf := bus.AcquirePayload()
+	buf := p.stream.AcquirePayload(len(payload))
 	msg.Payload = append(buf, payload...)
 
 	if msg.IsInit {
@@ -49,12 +49,12 @@ func (p *Publisher) PublishAudio(timestamp uint32, payload []byte) {
 // PublishVideo publishes a video message to the stream.
 // Detects AVC sequence headers and marks them as init data for late-joining subscribers.
 func (p *Publisher) PublishVideo(timestamp uint32, payload []byte) {
-	msg := bus.AcquireMessage()
+	msg := p.stream.AcquireMessage()
 	msg.Type = bus.MessageTypeVideo
 	msg.Timestamp = timestamp
 	msg.IsInit = isAVCSequenceHeader(payload)
 
-	buf := bus.AcquirePayload()
+	buf := p.stream.AcquirePayload(len(payload))
 	msg.Payload = append(buf, payload...)
 
 	if msg.IsInit {
@@ -70,12 +70,12 @@ func (p *Publisher) PublishVideo(timestamp uint32, payload []byte) {
 func (p *Publisher) PublishMetadata(timestamp uint32, payload []byte) {
 	payload = stripSetDataFrame(payload)
 
-	msg := bus.AcquireMessage()
+	msg := p.stream.AcquireMessage()
 	msg.Type = bus.MessageTypeMetadata
 	msg.Timestamp = timestamp
 	msg.IsInit = true // Metadata is always init data
 
-	buf := bus.AcquirePayload()
+	buf := p.stream.AcquirePayload(len(payload))
 	msg.Payload = append(buf, payload...)
 
 	p.stream.Publish(msg)

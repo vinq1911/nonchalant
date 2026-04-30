@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>nonchalant WS-FLV E2E player</title>
+</head>
+<body>
+  <h1>WebSocket-FLV E2E Player</h1>
+  <video id="player" controls autoplay muted playsinline width="320" height="240"></video>
+  <pre id="log"></pre>
+  <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+  <script>
+    // Tests drive this page: window.startPlayback(wsUrl) returns a promise that
+    // resolves with the first stable playback metric, or rejects on error.
+    const log = (msg) => {
+      const el = document.getElementById('log');
+      el.textContent += msg + '\n';
+      // eslint-disable-next-line no-console
+      console.log('[wsflv]', msg);
+    };
+
+    window.flvState = {
+      ready: false,
+      error: null,
+      framesSeen: 0,
+      currentTime: 0,
+      videoWidth: 0,
+      videoHeight: 0,
+    };
+
+    window.startPlayback = (wsUrl) => new Promise((resolve, reject) => {
+      if (!window.flvjs || !flvjs.isSupported()) {
+        const e = 'flv.js not supported in this browser';
+        log(e); reject(new Error(e)); return;
+      }
+      const video = document.getElementById('player');
+      const player = flvjs.createPlayer(
+        { type: 'flv', isLive: true, hasAudio: true, hasVideo: true, url: wsUrl },
+        { enableWorker: false, enableStashBuffer: false, stashInitialSize: 128 },
+      );
+      window._flvPlayer = player;
+      player.attachMediaElement(video);
+
+      const onLoadedData = () => {
+        window.flvState.videoWidth = video.videoWidth;
+        window.flvState.videoHeight = video.videoHeight;
+        log(`loadeddata: ${video.videoWidth}x${video.videoHeight}`);
+      };
+      const onTimeUpdate = () => {
+        window.flvState.currentTime = video.currentTime;
+        window.flvState.framesSeen += 1;
+        if (!window.flvState.ready && video.currentTime > 0.1 && video.videoWidth > 0) {
+          window.flvState.ready = true;
+          log(`ready: t=${video.currentTime.toFixed(3)} ${video.videoWidth}x${video.videoHeight}`);
+          resolve({
+            currentTime: video.currentTime,
+            videoWidth: video.videoWidth,
+            videoHeight: video.videoHeight,
+          });
+        }
+      };
+      video.addEventListener('loadeddata', onLoadedData);
+      video.addEventListener('timeupdate', onTimeUpdate);
+
+      player.on(flvjs.Events.ERROR, (errType, errDetail) => {
+        const msg = `flv.js error: ${errType} / ${errDetail}`;
+        window.flvState.error = msg;
+        log(msg);
+        reject(new Error(msg));
+      });
+
+      player.load();
+      player.play().catch((e) => {
+        log(`video.play rejected: ${e.message ?? e}`);
+      });
+
+      setTimeout(() => {
+        if (!window.flvState.ready) {
+          reject(new Error(`playback did not start: ${JSON.stringify(window.flvState)}`));
+        }
+      }, 30_000);
+    });
+  </script>
+</body>
+</html>
