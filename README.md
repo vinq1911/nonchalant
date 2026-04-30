@@ -33,38 +33,72 @@ This server currently provides:
 
 ## Performance
 
-The fan-out hot path has been profiled and rewritten three times. Headline
-numbers from `scripts/perf/` on an Apple M5 (see [reports/PERF-WOP.pdf](reports/PERF-WOP.pdf)
-for the full report including pprof tables and quality markers):
+nonchalant is built to fan one RTMP ingest out to thousands of HTTP-FLV
+viewers on a single process, with predictable latency and a near-idle CPU
+when nothing is happening.
 
-| Scenario              | Pre-WOP   | Post-WOP + Hijack |
-| --------------------- | --------- | ----------------- |
-| Idle CPU (no clients) | ~41 %     | ~4.7 %            |
-| 1024 subs throughput  | 184 MB/s  | 357 MB/s          |
-| Per-frame allocations | 3 / 64 KB | 0 / 0 B           |
+The numbers below come from `scripts/perf/run.sh` on an **Apple M5 laptop**
+(macOS, default kernel limits) using a real ~2.8 Mbps H.264 + AAC stream.
+The full report — methodology, pprof tables, and per-client jitter
+distributions — is in [reports/PERF-WOP.pdf](reports/PERF-WOP.pdf).
 
-What did the heavy lifting:
+### One publisher, N concurrent HTTP-FLV viewers
 
-- **Shared-log bus** (`internal/core/bus/sharedlog.go`) — single-producer
-  multi-cursor ring; `Publish` is one atomic add + one atomic store regardless
-  of subscriber count. 1 pub × 512 subs went from 3.93 µs to 74 ns.
-- **Per-stream Arena** (`internal/core/bus/arena.go`) — wrap-around bump
-  allocator for payload buffers. Eliminated the 64 KB sync.Pool allocation
-  per frame that pprof showed dominating the publisher path.
-- **Wake-on-publish** — subscribers park on an `atomic.Pointer[chan struct{}]`
-  closed by the publisher instead of busy-polling.
-- **HTTP/1.1 hijack** (`internal/svc/httpflv/handler.go:91`) — bypasses Go's
-  chunked-transfer encoding and the `bufio` + `ResponseWriter.Flush` double
-  flush. Each FLV tag is now exactly one `syscall.write` to the TCP socket.
+| Viewers | Aggregate throughput | Per-viewer rate | Stall p95 | Bus drops |
+| ------: | -------------------: | --------------: | --------: | --------: |
+|       1 |             0.3 MB/s |        349 KB/s |     94 ms |         0 |
+|      64 |              22 MB/s |        345 KB/s |    151 ms |         0 |
+|     256 |              88 MB/s |        345 KB/s |    188 ms |         0 |
+|    1024 |             358 MB/s |        349 KB/s |    168 ms |         0 |
+|    4096 |              33 MB/s |          8 KB/s |     33 s  |         0 |
 
-Reproduce locally:
+Up to ~1024 viewers per process the server delivers full bitrate to every
+client with sub-200 ms p95 stalls and zero bus drops. Beyond that the laptop
+hits a per-socket I/O wall (the bus stays clean — drops are still zero — but
+the kernel can no longer drain that many TCP send buffers fast enough). On
+real server hardware and Linux the ceiling moves up materially; the bus and
+fan-out path themselves microbenchmark past 250 K subscribers.
+
+### Idle behaviour
+
+With a publisher connected and no viewers, the server sits at **~5 % CPU**
+on an M5. With no publisher and no viewers, it is essentially asleep —
+subscribers park on a channel closed by the publisher rather than polling.
+
+### What makes it fast
+
+- **Lock-free shared-log bus.** A single-producer, multi-cursor ring means
+  `Publish` is one atomic add + one atomic store regardless of how many
+  viewers are attached. Subscriber count does not appear in the publisher's
+  hot path. (`internal/core/bus/sharedlog.go`)
+- **Zero allocations per RTMP frame.** A per-stream wrap-around arena
+  serves payload buffers; `flv.AppendTag` writes directly into them. No
+  `sync.Pool`, no GC pressure on the ingest path. (`internal/core/bus/arena.go`)
+- **Wake-on-publish.** Idle viewers block on an
+  `atomic.Pointer[chan struct{}]` that the publisher closes when a frame
+  lands. No timers, no spinning, no background scheduler load.
+- **HTTP/1.1 hijack on the FLV path.** Once the headers are sent, the FLV
+  handler takes ownership of the raw TCP socket and writes one FLV tag per
+  `syscall.write` — no chunked-transfer framing, no `bufio` double flush.
+  This was the single biggest win for high-fan-out CPU. (`internal/svc/httpflv/handler.go`)
+- **Per-subscriber backpressure with bounded buffers.** Slow viewers drop
+  oldest frames instead of blocking the publisher; the drop counter is
+  exposed on `/api/streams` and `/metrics`.
+
+### Reproducing the numbers
+
+The harness is fully scripted and the raw outputs live under `reports/data/`:
 
 ```bash
-scripts/perf/idle.sh         # idle CPU sample
-scripts/perf/run.sh          # subscriber sweep
-scripts/perf/profile.sh prof # 30 s pprof at 1024 subs
-python scripts/perf/build_report.py  # rebuild reports/PERF-WOP.pdf
+scripts/perf/idle.sh                    # idle CPU sample
+scripts/perf/run.sh                     # subscriber sweep (n=1..4096)
+scripts/perf/profile.sh prof            # 30 s pprof at 1024 viewers
+python scripts/perf/build_report.py     # regenerate reports/PERF-WOP.pdf
 ```
+
+For ad-hoc load tests against a running server, the standalone
+`cmd/loadtest` binary takes `-url`, `-api`, `-n`, and `-d` flags and emits a
+CSV summary suitable for diffing across runs.
 
 ## Quick Start
 
